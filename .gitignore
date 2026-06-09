@@ -1,0 +1,28 @@
+# Dépendances (les dossiers ultra lourds à ne jamais push)
+node_modules/
+.pnpm-store/
+
+# Fichiers de build / Production (générés quand tu tapes npm run build)
+dist/
+build/
+
+# Fichiers temporaires de Vite et de cache
+.vite/
+.eslintcache
+.turbo/
+
+# Fichiers de configuration locale et variables d'environnement (au cas où tu remets la connexion Discord plus tard)
+.env
+.env.local
+.env.*.local
+
+# Fichiers système (Mac et Windows)
+.DS_Store
+Thumbs.db
+*.local
+
+# Logs d'erreurs d'npm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
