@@ -26,3 +26,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# Données cartes FR téléchargées automatiquement (scripts/telecharger-cartes-fr.mjs)
+public/cartes-fr.json

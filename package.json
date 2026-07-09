@@ -4,13 +4,17 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/telecharger-cartes-fr.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/telecharger-cartes-fr.mjs",
     "build": "vite build",
+    "cartes-fr": "node scripts/telecharger-cartes-fr.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.0",
+    "html2canvas": "^1.4.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
