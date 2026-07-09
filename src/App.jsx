@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import html2canvas from 'html2canvas'
 import imageHero from './assets/hero.png'
+import { supabase } from './supabaseClient'
 
 const ENCRES = [
   { id: 'Amber', nom: { fr: 'Ambre', en: 'Amber' }, color: 'bg-amber-500', border: 'border-amber-500', text: 'text-black', hex: '#f59e0b' },
@@ -75,6 +76,19 @@ const TRADS = {
     exporterImage: 'Télécharger en image',
     exportEnCours: 'Génération de l\'image...',
     exportErreur: 'Impossible de générer l\'image, réessaie.',
+    deconnexion: 'Déconnexion',
+    profilTitre: 'Profil & données personnelles',
+    pseudoLabel: 'Pseudo affiché',
+    pseudoAide: 'Ce nom remplace ton pseudo Discord dans l\'application.',
+    enregistrerProfil: 'Enregistrer',
+    pseudoEnregistre: 'Pseudo enregistré !',
+    rgpdTitre: 'Tes données (RGPD)',
+    rgpdTexte: 'Loremasters stocke uniquement : ton identifiant Discord (pseudo, avatar, e-mail fournis par Discord), tes decks et tes plans de jeu. Ces données servent seulement à faire fonctionner l\'application, ne sont jamais partagées ni utilisées à d\'autres fins, et tu peux les exporter ou les supprimer à tout moment ci-dessous.',
+    exporterDonnees: 'Exporter mes données (JSON)',
+    supprimerCompte: 'Supprimer mon compte et toutes mes données',
+    supprimerConfirme1: 'Supprimer définitivement ton compte et toutes tes données (decks, plans de jeu) ? Cette action est irréversible.',
+    supprimerConfirme2: 'Dernière confirmation : tout sera effacé, y compris sur ce navigateur. Continuer ?',
+    suppressionErreur: 'La suppression a échoué, réessaie ou contacte l\'administrateur.',
     nouvelleCarte: 'Nouvelle Carte',
     gestionRatio: 'Gestionnaire de Ratio Visuel',
     modifDesc: 'Modifie ou intègre proprement tes cartes sans casser ta base de données',
@@ -145,6 +159,19 @@ const TRADS = {
     exporterImage: 'Download as image',
     exportEnCours: 'Generating image...',
     exportErreur: 'Could not generate the image, please retry.',
+    deconnexion: 'Log out',
+    profilTitre: 'Profile & personal data',
+    pseudoLabel: 'Display name',
+    pseudoAide: 'This name replaces your Discord username in the app.',
+    enregistrerProfil: 'Save',
+    pseudoEnregistre: 'Name saved!',
+    rgpdTitre: 'Your data (GDPR)',
+    rgpdTexte: 'Loremasters only stores: your Discord identity (username, avatar, e-mail provided by Discord), your decks and your game plans. This data is used solely to run the app, is never shared or used for anything else, and you can export or delete it at any time below.',
+    exporterDonnees: 'Export my data (JSON)',
+    supprimerCompte: 'Delete my account and all my data',
+    supprimerConfirme1: 'Permanently delete your account and all your data (decks, game plans)? This cannot be undone.',
+    supprimerConfirme2: 'Last confirmation: everything will be erased, including on this browser. Continue?',
+    suppressionErreur: 'Deletion failed, please retry or contact the administrator.',
     nouvelleCarte: 'New Card',
     gestionRatio: 'Visual Ratio Manager',
     modifDesc: 'Modify or integrate your cards safely without breaking your database',
@@ -265,6 +292,7 @@ export default function App() {
   const [indexDeckActif, setIndexDeckActif] = useState(0)
 
   const [langue, setLangue] = useState(() => localStorage.getItem('lorcana_playbook_langue') || 'fr')
+  const t = (cleTexte) => TRADS[langue][cleTexte] || TRADS['fr'][cleTexte]
 
   const [carteEnCoursEdition, setCarteEnCoursEdition] = useState(null)
   const [estUnAjoutPur, setEstUnAjoutPur] = useState(false)
@@ -310,6 +338,143 @@ export default function App() {
   useEffect(() => { localStorage.setItem('lorcana_playbook_tous_les_decks', JSON.stringify(listeDecks)) }, [listeDecks])
   useEffect(() => { localStorage.setItem('lorcana_playbook_strategies', JSON.stringify(strategies)) }, [strategies])
   useEffect(() => { localStorage.setItem('lorcana_playbook_langue', langue) }, [langue])
+
+  // --- Connexion Discord + sauvegarde cloud (Supabase) ---
+  const [session, setSession] = useState(null)
+  const [donneesCloudPretes, setDonneesCloudPretes] = useState(false)
+
+  useEffect(() => {
+    if (!supabase) return
+    supabase.auth.getSession().then(({ data }) => setSession(data.session))
+    const { data: abonnement } = supabase.auth.onAuthStateChange((_evenement, nouvelleSession) => {
+      setSession(nouvelleSession)
+      if (!nouvelleSession) setDonneesCloudPretes(false)
+    })
+    return () => abonnement.subscription.unsubscribe()
+  }, [])
+
+  // --- Profil & RGPD ---
+  const [profilOuvert, setProfilOuvert] = useState(false)
+  const [pseudoEdition, setPseudoEdition] = useState('')
+  const [messageProfil, setMessageProfil] = useState('')
+
+  const pseudoAffiche = session?.user
+    ? (session.user.user_metadata?.pseudo_personnalise || session.user.user_metadata?.full_name || session.user.user_metadata?.name || 'Joueur')
+    : ''
+
+  const ouvrirProfil = () => {
+    setPseudoEdition(pseudoAffiche)
+    setMessageProfil('')
+    setProfilOuvert(true)
+  }
+
+  const enregistrerPseudo = async () => {
+    if (!supabase || !pseudoEdition.trim()) return
+    const { data, error } = await supabase.auth.updateUser({
+      data: { pseudo_personnalise: pseudoEdition.trim() },
+    })
+    if (error) { console.error(error); return }
+    if (data?.user) setSession(s => (s ? { ...s, user: data.user } : s))
+    setMessageProfil(t('pseudoEnregistre'))
+  }
+
+  // Droit à la portabilité : export JSON de toutes les données de l'utilisateur
+  const exporterMesDonnees = () => {
+    const donnees = {
+      exporte_le: new Date().toISOString(),
+      profil: {
+        pseudo: pseudoAffiche,
+        email: session?.user?.email || null,
+        identifiant: session?.user?.id || null,
+        compte_cree_le: session?.user?.created_at || null,
+      },
+      decks: listeDecks,
+      strategies,
+    }
+    const blob = new Blob([JSON.stringify(donnees, null, 2)], { type: 'application/json' })
+    const lien = document.createElement('a')
+    lien.href = URL.createObjectURL(blob)
+    lien.download = 'loremasters-mes-donnees.json'
+    lien.click()
+    URL.revokeObjectURL(lien.href)
+  }
+
+  // Droit à l'effacement : suppression du compte + de toutes les données (cloud et locales)
+  const supprimerMonCompte = async () => {
+    if (!supabase || !session?.user) return
+    if (!window.confirm(t('supprimerConfirme1'))) return
+    if (!window.confirm(t('supprimerConfirme2'))) return
+    const { error } = await supabase.rpc('supprimer_mon_compte')
+    if (error) {
+      console.error(error)
+      alert(t('suppressionErreur'))
+      return
+    }
+    localStorage.removeItem('lorcana_playbook_tous_les_decks')
+    localStorage.removeItem('lorcana_playbook_strategies')
+    setListeDecks([])
+    setStrategies({})
+    setProfilOuvert(false)
+    setPageActive('accueil')
+    await supabase.auth.signOut()
+  }
+
+  const seConnecterAvecDiscord = async () => {
+    if (!supabase) return
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'discord',
+      options: { redirectTo: window.location.origin },
+    })
+    if (error) console.error('Connexion Discord impossible :', error)
+  }
+
+  const seDeconnecter = async () => {
+    if (!supabase) return
+    await supabase.auth.signOut()
+  }
+
+  // Au login : on charge les données cloud ; à la toute première connexion,
+  // on migre automatiquement ce qui existe déjà dans le navigateur.
+  useEffect(() => {
+    if (!supabase || !session?.user) return
+    let annule = false
+    const charger = async () => {
+      const { data, error } = await supabase
+        .from('donnees_utilisateur')
+        .select('decks, strategies')
+        .eq('user_id', session.user.id)
+        .maybeSingle()
+      if (annule) return
+      if (error) { console.error('Chargement cloud impossible :', error); return }
+      if (data) {
+        setListeDecks(Array.isArray(data.decks) ? data.decks : [])
+        setStrategies(data.strategies && typeof data.strategies === 'object' ? data.strategies : {})
+        setIndexDeckActif(0)
+      } else {
+        const { error: erreurInsertion } = await supabase
+          .from('donnees_utilisateur')
+          .insert({ user_id: session.user.id, decks: listeDecks, strategies })
+        if (erreurInsertion) { console.error('Migration locale vers le cloud impossible :', erreurInsertion); return }
+      }
+      if (!annule) setDonneesCloudPretes(true)
+    }
+    charger()
+    return () => { annule = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user?.id])
+
+  // Sauvegarde cloud automatique (debouncée) dès qu'un deck ou une stratégie change
+  useEffect(() => {
+    if (!supabase || !session?.user || !donneesCloudPretes) return
+    const minuteur = setTimeout(async () => {
+      const { error } = await supabase
+        .from('donnees_utilisateur')
+        .upsert({ user_id: session.user.id, decks: listeDecks, strategies, maj_le: new Date().toISOString() })
+      if (error) console.error('Sauvegarde cloud impossible :', error)
+    }, 1000)
+    return () => clearTimeout(minuteur)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listeDecks, strategies, session?.user?.id, donneesCloudPretes])
 
   // Dictionnaire des cartes françaises, chargé dès que le site passe en français
   const [cartesFr, setCartesFr] = useState(null)
@@ -862,8 +1027,6 @@ export default function App() {
       .filter(p => p && p.adversaireEncres && p.archetypeAdverse)
   })()
 
-  const t = (cleTexte) => TRADS[langue][cleTexte] || TRADS['fr'][cleTexte]
-
   const extraireInfosCarteLocale = (carte) => {
     if (!carte) return { name: '', image: '' }
     if (carte.isNeutral || carte.id === 'neutral-mulligan') {
@@ -929,7 +1092,26 @@ export default function App() {
           >
             {t('langueBouton')}
           </button>
-          <button className="btn-ghost px-4 py-2 rounded-xl text-sm font-medium">{t('connexion')}</button>
+          {supabase && (
+            session?.user ? (
+              <div className="flex items-center gap-2">
+                <button onClick={ouvrirProfil} className="flex items-center gap-2 btn-ghost px-3 py-2 rounded-xl" title={t('profilTitre')}>
+                  {session.user.user_metadata?.avatar_url && (
+                    <img src={session.user.user_metadata.avatar_url} alt="" className="w-6 h-6 rounded-full border border-white/20" />
+                  )}
+                  <span className="text-sm font-bold text-slate-200 max-w-32 truncate">{pseudoAffiche}</span>
+                </button>
+                <button onClick={seDeconnecter} className="btn-ghost px-3 py-2 rounded-xl text-sm font-medium" title={t('deconnexion')}>
+                  ⏻
+                </button>
+              </div>
+            ) : (
+              <button onClick={seConnecterAvecDiscord} className="btn-ghost px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="#5865F2" aria-hidden="true"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
+                {t('connexion')}
+              </button>
+            )
+          )}
         </div>
       </header>
 
@@ -1610,6 +1792,59 @@ export default function App() {
               </div>
 
               <div style={{ marginTop: '36px', textAlign: 'center', fontSize: '12px', color: '#475569', fontWeight: 600 }}>Lormasters by Ekkox</div>
+            </div>
+          </div>
+        )}
+
+        {/* MODALE PROFIL & DONNÉES PERSONNELLES (RGPD) */}
+        {profilOuvert && session?.user && (
+          <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn">
+            <div className="panneau bg-slate-950/90 rounded-2xl w-full max-w-lg flex flex-col overflow-hidden shadow-2xl">
+              <div className="p-5 border-b border-white/5 flex justify-between items-center">
+                <h3 className="font-display font-bold text-lg text-amber-400">{t('profilTitre')}</h3>
+                <button onClick={() => setProfilOuvert(false)} className="btn-ghost text-sm font-bold px-4 py-2 rounded-xl">{t('fermer')}</button>
+              </div>
+
+              <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar">
+                <div className="flex items-center gap-4">
+                  {session.user.user_metadata?.avatar_url && (
+                    <img src={session.user.user_metadata.avatar_url} alt="" className="w-14 h-14 rounded-full border border-white/20" />
+                  )}
+                  <div className="min-w-0">
+                    <p className="font-bold text-slate-100 truncate">{pseudoAffiche}</p>
+                    <p className="text-xs text-slate-500 truncate">{session.user.email}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">{t('pseudoLabel')}</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={pseudoEdition}
+                      onChange={(e) => { setPseudoEdition(e.target.value); setMessageProfil('') }}
+                      maxLength={32}
+                      className="flex-1 p-3 bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl text-sm outline-none text-slate-200"
+                    />
+                    <button onClick={enregistrerPseudo} disabled={!pseudoEdition.trim()} className="btn-or px-5 rounded-xl text-sm">{t('enregistrerProfil')}</button>
+                  </div>
+                  <p className="text-[11px] text-slate-500">{t('pseudoAide')}</p>
+                  {messageProfil && <p className="text-xs text-emerald-400 font-bold">{messageProfil}</p>}
+                </div>
+
+                <hr className="filet-dore" />
+
+                <div className="space-y-3">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">{t('rgpdTitre')}</h4>
+                  <p className="text-xs text-slate-400 leading-relaxed">{t('rgpdTexte')}</p>
+                  <button onClick={exporterMesDonnees} className="w-full btn-ghost px-4 py-3 rounded-xl text-sm font-bold">
+                    ⬇ {t('exporterDonnees')}
+                  </button>
+                  <button onClick={supprimerMonCompte} className="w-full px-4 py-3 rounded-xl text-sm font-bold border border-red-900/60 text-red-400 hover:bg-red-500/10 hover:border-red-500/60 transition-all">
+                    {t('supprimerCompte')}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}

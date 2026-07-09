@@ -29,3 +29,7 @@ pnpm-debug.log*
 
 # Données cartes FR téléchargées automatiquement (scripts/telecharger-cartes-fr.mjs)
 public/cartes-fr.json
+
+# Clés locales (Supabase, etc.)
+.env
+.env.local
