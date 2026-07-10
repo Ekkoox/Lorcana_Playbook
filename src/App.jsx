@@ -2,285 +2,18 @@ import { useState, useEffect, useRef } from 'react'
 import html2canvas from 'html2canvas'
 import imageHero from './assets/hero.png'
 import { supabase } from './supabaseClient'
-
-const ENCRES = [
-  { id: 'Amber', nom: { fr: 'Ambre', en: 'Amber' }, color: 'bg-amber-500', border: 'border-amber-500', text: 'text-black', hex: '#f59e0b' },
-  { id: 'Amethyst', nom: { fr: 'Améthyste', en: 'Amethyst' }, color: 'bg-purple-700', border: 'border-purple-700', text: 'text-white', hex: '#9333ea' },
-  { id: 'Emerald', nom: { fr: 'Émeraude', en: 'Emerald' }, color: 'bg-emerald-600', border: 'border-emerald-600', text: 'text-white', hex: '#10b981' },
-  { id: 'Ruby', nom: { fr: 'Rubis', en: 'Ruby' }, color: 'bg-red-600', border: 'border-red-600', text: 'text-white', hex: '#ef4444' },
-  { id: 'Sapphire', nom: { fr: 'Saphir', en: 'Sapphire' }, color: 'bg-blue-600', border: 'border-blue-600', text: 'text-white', hex: '#3b82f6' },
-  { id: 'Steel', nom: { fr: 'Acier', en: 'Steel' }, color: 'bg-slate-500', border: 'border-slate-500', text: 'text-white', hex: '#94a3b8' },
-]
-
-// Couleur hexadécimale d'une encre (gris ardoise par défaut)
-const couleurEncre = (id) => ENCRES.find(e => e.id === id)?.hex || '#475569'
-
-// Dégradé CSS à partir d'une liste d'encres (1 ou 2 couleurs)
-const degradeEncres = (ids = [], angle = 135, alpha = '') => {
-  const couleurs = (ids.length ? ids : ['Steel']).map(id => `${couleurEncre(id)}${alpha}`)
-  const [c1, c2] = [couleurs[0], couleurs[1] || couleurs[0]]
-  return `linear-gradient(${angle}deg, ${c1}, ${c2})`
-}
-
-// Pastille d'encre lumineuse
-const PastilleEncre = ({ id, taille = 'w-4 h-4', langue = 'fr' }) => {
-  const encre = ENCRES.find(e => e.id === id)
-  if (!encre) return null
-  return (
-    <span
-      title={encre.nom[langue]}
-      className={`${taille} rounded-full border border-white/40 inline-block shrink-0`}
-      style={{ backgroundColor: encre.hex, boxShadow: `0 0 10px ${encre.hex}aa` }}
-    />
-  )
-}
-
-const TRADS = {
-  fr: {
-    langueBouton: '🇫🇷 Français',
-    connexion: 'Connexion',
-    accueilTitre: 'Loremasters',
-    boutonImporter: 'Importer un deck',
-    boutonMesDecks: 'Mes decks',
-    vosDecks: 'Vos Decks',
-    importAutre: 'Importer un autre deck',
-    contient: 'Contient',
-    cartes: 'cartes',
-    encres: 'Encres',
-    plansJeu: 'Faire mes plans de jeu',
-    modifierListe: 'Modifier la Liste',
-    supprimer: 'Supprimer',
-    ajouterCarte: 'Ajouter une carte',
-    retourDecks: 'Retour à mes decks',
-    biblioTactique: 'Bibliothèque Tactique',
-    hubDesc: 'Sélectionnez une stratégie existante pour la consulter/modifier, ou lancez-en une nouvelle.',
-    modifierPlan: 'Modifier Plan',
-    archetype: 'Archétype',
-    creerNouvelleStrat: 'Créer une nouvelle stratégie',
-    retourIndex: 'Retourner à la liste des plans de jeu',
-    configTactique: 'Configuration Tactique',
-    feuilleMatch: 'Feuille de Match',
-    choixPositionTour: 'Avant le séquenceur, choisis ta position :',
-    joueurCommence: 'On commence',
-    joueurSecond: 'On est second',
-    choixBicolo: '1. Choix de la bicolorité adverse',
-    choixArchetype: "2. Quel type d'archétype est-ce ?",
-    placeholderArchetype: 'Ex: Aggro, Contrôle, Midrange, Steelsong...',
-    matchupActuel: 'Matchup Actuel',
-    mulliganOptimal: 'Mulligan Optimal',
-    lignesPlay: 'Lignes de Play',
-    placeholderLignes: 'Écris tes lignes de jeu détaillées ici...',
-    enregistrerFermer: 'Fermer ce plan',
-    sauvegardeAuto: 'Sauvegarde automatique activée',
-    sauvegardeA: 'Sauvegardé à',
-    exporterImage: 'Télécharger en image',
-    exportEnCours: 'Génération de l\'image...',
-    exportErreur: 'Impossible de générer l\'image, réessaie.',
-    deconnexion: 'Déconnexion',
-    profilTitre: 'Profil & données personnelles',
-    pseudoLabel: 'Pseudo affiché',
-    pseudoAide: 'Ce nom remplace ton pseudo Discord dans l\'application.',
-    enregistrerProfil: 'Enregistrer',
-    pseudoEnregistre: 'Pseudo enregistré !',
-    rgpdTitre: 'Tes données (RGPD)',
-    rgpdTexte: 'Loremasters stocke uniquement : ton identifiant Discord (pseudo, avatar, e-mail fournis par Discord), tes decks et tes plans de jeu. Ces données servent seulement à faire fonctionner l\'application, ne sont jamais partagées ni utilisées à d\'autres fins, et tu peux les exporter ou les supprimer à tout moment ci-dessous.',
-    exporterDonnees: 'Exporter mes données (JSON)',
-    supprimerCompte: 'Supprimer mon compte et toutes mes données',
-    supprimerConfirme1: 'Supprimer définitivement ton compte et toutes tes données (decks, plans de jeu) ? Cette action est irréversible.',
-    supprimerConfirme2: 'Dernière confirmation : tout sera effacé, y compris sur ce navigateur. Continuer ?',
-    suppressionErreur: 'La suppression a échoué, réessaie ou contacte l\'administrateur.',
-    nouvelleCarte: 'Nouvelle Carte',
-    gestionRatio: 'Gestionnaire de Ratio Visuel',
-    modifDesc: 'Modifie ou intègre proprement tes cartes sans casser ta base de données',
-    cibleEdition: "Cible d'édition",
-    selectionDroite: 'Sélection à droite',
-    visuelApi: "Utilise la recherche de droite pour sélectionner le visuel officiel...",
-    quantiteDesiree: 'Quantité désirée',
-    enregistrerRatio: 'Enregistrer Ratio',
-    retirer: 'Retirer',
-    consigneRecherche: 'Chercher une carte dans la base globale',
-    placeholderRecherche: "Tapez le nom d'un personnage, d'une action...",
-    apiConnexion: "Connexion à l'API Lorcana en cours...",
-    injecter: 'Injecter',
-    remplacer: 'Remplacer',
-    rechercheConsigneVide: 'Entrez au moins 2 lettres pour lancer la recherche globale...',
-    aucunResultat: 'Aucune carte trouvée pour cette recherche.',
-    boutonAjouterDeck: 'Sauvegarder ce deck',
-    nomDeckLabel: 'Nom de votre Deck',
-    listeTexteLabel: 'Liste au format texte',
-    erreurImport: "Aucune carte valide n'a été trouvée.",
-    nouveauDeckTitre: 'Ajouter un nouveau deck',
-    fermer: 'Fermer',
-    emplacement: 'Sélectionner pour l\'emplacement',
-    viderEmplacement: 'Vider cet emplacement',
-    manaCurve: 'Courbe d\'Encre',
-    reglesTitre: 'Validité du Deck',
-    regleCartes: '60+ cartes',
-    regleEncres: 'Max 2 couleurs',
-    regleMaxExemplaires: 'Pas d\'excès (>4)'
-  },
-  en: {
-    langueBouton: '🇬🇧 English',
-    connexion: 'Login',
-    accueilTitre: 'Loremasters',
-    boutonImporter: 'Import a deck',
-    boutonMesDecks: 'My decks',
-    vosDecks: 'My Decks',
-    importAutre: 'Import another deck',
-    contient: 'Contains',
-    cartes: 'cards',
-    encres: 'Inks',
-    plansJeu: 'Game Plans',
-    modifierListe: 'Edit Decklist',
-    supprimer: 'Delete',
-    ajouterCarte: 'Add a card',
-    retourDecks: 'Back to my decks',
-    biblioTactique: 'Tactical Library',
-    hubDesc: 'Select an existing strategy to view/edit, or start a new one.',
-    modifierPlan: 'Edit Plan',
-    archetype: 'Archetype',
-    creerNouvelleStrat: 'Create a new strategy',
-    retourIndex: 'Back to strategy list',
-    configTactique: 'Tactical Setup',
-    feuilleMatch: 'Match Sheet',
-    choixPositionTour: 'Before the sequencer, choose your position:',
-    joueurCommence: 'We start',
-    joueurSecond: 'We are second',
-    choixBicolo: "1. Choose opponent's inks",
-    choixArchetype: '2. What kind of archetype is it?',
-    placeholderArchetype: 'Ex: Aggro, Control, Midrange, Steelsong...',
-    matchupActuel: 'Current Matchup',
-    mulliganOptimal: 'Optimal Mulligan',
-    lignesPlay: 'Lines of Play',
-    placeholderLignes: 'Write your detailed lines of play here...',
-    enregistrerFermer: 'Close this plan',
-    sauvegardeAuto: 'Auto-save enabled',
-    sauvegardeA: 'Saved at',
-    exporterImage: 'Download as image',
-    exportEnCours: 'Generating image...',
-    exportErreur: 'Could not generate the image, please retry.',
-    deconnexion: 'Log out',
-    profilTitre: 'Profile & personal data',
-    pseudoLabel: 'Display name',
-    pseudoAide: 'This name replaces your Discord username in the app.',
-    enregistrerProfil: 'Save',
-    pseudoEnregistre: 'Name saved!',
-    rgpdTitre: 'Your data (GDPR)',
-    rgpdTexte: 'Loremasters only stores: your Discord identity (username, avatar, e-mail provided by Discord), your decks and your game plans. This data is used solely to run the app, is never shared or used for anything else, and you can export or delete it at any time below.',
-    exporterDonnees: 'Export my data (JSON)',
-    supprimerCompte: 'Delete my account and all my data',
-    supprimerConfirme1: 'Permanently delete your account and all your data (decks, game plans)? This cannot be undone.',
-    supprimerConfirme2: 'Last confirmation: everything will be erased, including on this browser. Continue?',
-    suppressionErreur: 'Deletion failed, please retry or contact the administrator.',
-    nouvelleCarte: 'New Card',
-    gestionRatio: 'Visual Ratio Manager',
-    modifDesc: 'Modify or integrate your cards safely without breaking your database',
-    cibleEdition: 'Target Edit',
-    selectionDroite: 'Select on the right',
-    visuelApi: 'Use the search bar on the right to select the official artwork...',
-    quantiteDesiree: 'Desired Quantity',
-    enregistrerRatio: 'Save Ratio',
-    retirer: 'Remove',
-    consigneRecherche: 'Search a card in the global database',
-    placeholderRecherche: 'Type a character name, an action...',
-    apiConnexion: 'Connecting to Lorcana API...',
-    injecter: 'Add to Deck',
-    remplacer: 'Replace',
-    rechercheConsigneVide: 'Enter at least 2 letters to launch global search...',
-    aucunResultat: 'No cards found for this search.',
-    boutonAjouterDeck: 'Save this deck',
-    nomDeckLabel: 'Deck Name',
-    listeTexteLabel: 'Text Decklist',
-    erreurImport: 'No valid cards were found.',
-    nouveauDeckTitre: 'Add a new deck',
-    fermer: 'Close',
-    emplacement: 'Select for slot',
-    viderEmplacement: 'Clear this slot',
-    manaCurve: 'Ink Curve',
-    reglesTitre: 'Deck Validity',
-    regleCartes: '60+ cards',
-    regleEncres: 'Max 2 inks',
-    regleMaxExemplaires: 'No excess (>4)'
-  }
-}
-
-// --- Données françaises officielles des cartes (LorcanaJSON) ---
-// L'API Lorcast ne fournit que les cartes en anglais : on récupère donc
-// les noms et visuels français depuis Lorcan aJSON, indexés par set + numéro.
-// Le fichier est téléchargé dans public/ par scripts/telecharger-cartes-fr.mjs
-// (lancé avant `npm run dev` / `npm run build`) car lorcanajson.org bloque le CORS.
-const URL_CARTES_FR = '/cartes-fr.json'
-let promesseCartesFr = null
-
-const chargerCartesFr = () => {
-  if (!promesseCartesFr) {
-    promesseCartesFr = fetch(URL_CARTES_FR)
-      .then(reponse => {
-        if (!reponse.ok) throw new Error(`Fichier cartes FR introuvable (HTTP ${reponse.status})`)
-        const typeContenu = reponse.headers.get('content-type') || ''
-        if (!typeContenu.includes('json')) throw new Error('Fichier cartes FR absent : lancez `npm run cartes-fr`')
-        return reponse.json()
-      })
-      .then(donnees => {
-        const index = new Map()
-        for (const carteFr of donnees.cards || []) {
-          if (carteFr.setCode == null || carteFr.number == null) continue
-          // On ne garde que les champs utiles pour limiter la mémoire
-          index.set(`${carteFr.setCode}|${carteFr.number}`, {
-            fullName: carteFr.fullName,
-            simpleName: carteFr.simpleName,
-            setCode: carteFr.setCode,
-            number: carteFr.number,
-            images: { thumbnail: carteFr.images?.thumbnail, full: carteFr.images?.full }
-          })
-        }
-        return index
-      })
-      .catch(err => {
-        promesseCartesFr = null // permet de retenter plus tard en cas d'échec réseau
-        throw err
-      })
-  }
-  return promesseCartesFr
-}
-
-// Compare des noms sans tenir compte des accents ni de la casse
-const normaliserTexte = (texte) =>
-  (texte || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-
-// Image française de secours (Dreamborn) pour les cartes pas encore dans LorcanaJSON,
-// typiquement le dernier chapitre sorti. URL construite depuis set + numéro.
-const imageFrDreamborn = (carte) => {
-  const codeSet = carte?.set?.code
-  const numero = parseInt(carte?.collector_number, 10)
-  if (!codeSet || Number.isNaN(numero) || !/^\d+$/.test(String(codeSet))) return null
-  return `https://cdn.dreamborn.ink/images/fr/cards/${String(codeSet).padStart(3, '0')}-${String(numero).padStart(3, '0')}`
-}
-
-// Réécrit l'URL d'une image de carte vers le proxy même-origine (voir vite.config.js) :
-// les CDN de cartes n'envoient pas d'en-têtes CORS, et html2canvas ne peut dessiner
-// que des images même-origine (ou CORS) lors de l'export du plan en PNG.
-const urlImagePourExport = (url) => {
-  if (!url) return url
-  try {
-    const u = new URL(url, window.location.origin)
-    if (u.origin === window.location.origin) return url
-    if (u.hostname === 'cards.lorcast.io') return `/img-lorcast${u.pathname}${u.search}`
-    if (u.hostname === 'cdn.dreamborn.ink') return `/img-dreamborn${u.pathname}${u.search}`
-    if (u.hostname === 'api.lorcana.ravensburger.com') return `/img-ravensburger${u.pathname}${u.search}`
-    return url
-  } catch {
-    return url
-  }
-}
-
-// Clé "setCode|numéro" d'une carte Lorcast, pour la faire correspondre aux données FR
-const cleCarteFr = (carte) => {
-  const codeSet = carte?.set?.code
-  const numero = parseInt(carte?.collector_number, 10)
-  if (!codeSet || Number.isNaN(numero)) return null
-  return `${codeSet}|${numero}`
-}
+import { TRADS } from './traductions'
+import {
+  ENCRES,
+  couleurEncre,
+  degradeEncres,
+  chargerCartesFr,
+  normaliserTexte,
+  imageFrDreamborn,
+  urlImagePourExport,
+  cleCarteFr,
+} from './lorcana'
+import { PastilleEncre } from './composants/PastilleEncre'
 
 export default function App() {
 
@@ -495,11 +228,13 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (rechercheTerme.trim().length < 2) {
-      setResultatsRecherche([])
-      return
-    }
+    const termeSaisi = rechercheTerme.trim()
     const delaiRecherche = setTimeout(async () => {
+      if (termeSaisi.length < 2) {
+        setResultatsRecherche([])
+        setRechercheChargement(false)
+        return
+      }
       setRechercheChargement(true)
       let resultats = []
       try {
@@ -545,7 +280,7 @@ export default function App() {
 
       setResultatsRecherche(resultats.slice(0, 20))
       setRechercheChargement(false)
-    }, 400)
+    }, termeSaisi.length < 2 ? 0 : 400)
     return () => clearTimeout(delaiRecherche)
   }, [rechercheTerme, langue, cartesFr])
 
@@ -762,12 +497,6 @@ export default function App() {
         { tour: 3, cartesOptimales: [], note: '' },
       ]))
     }
-  }
-
-  const chargerStrategie = (nomArchetype) => {
-    setArchetypeAdverse(nomArchetype)
-    const cle = genererCleStrategie(nomArchetype)
-    chargerDonneesPosition(cle, positionJoueur)
   }
 
   const choisirPositionJoueur = (position) => {
@@ -1039,9 +768,9 @@ export default function App() {
     if (langue === 'fr') {
       const carteFr = trouverCarteFr(carte)
       return {
-        name: carte.name_locales?.fr || carteFr?.fullName || carte.name,
+        name: carteFr?.fullName || carte.name,
         // LorcanaJSON d'abord ; sinon Dreamborn (sets trop récents) ; sinon l'anglais
-        image: carte.image_uris?.digital?.fr || carteFr?.images?.thumbnail || carteFr?.images?.full || imageFrDreamborn(carte) || imageAnglaise,
+        image: carteFr?.images?.thumbnail || carteFr?.images?.full || imageFrDreamborn(carte) || imageAnglaise,
         imageSecours: imageAnglaise
       }
     }
@@ -1082,7 +811,20 @@ export default function App() {
           onClick={() => { setPageActive('accueil'); setAdversaireEncres([]); setArchetypeAdverse(''); setCarteEnCoursEdition(null) }}
           className="flex items-center gap-3 group"
         >
-          <span className="w-9 h-9 rounded-xl btn-or flex items-center justify-center font-display font-black text-lg">L</span>
+          <svg className="w-7 h-7 -rotate-6 group-hover:rotate-0 transition-transform" viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <defs>
+              <linearGradient id="plumeOr" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stopColor="#fde68a" />
+                <stop offset="0.55" stopColor="#f59e0b" />
+                <stop offset="1" stopColor="#b45309" />
+              </linearGradient>
+            </defs>
+            <g stroke="url(#plumeOr)">
+              <path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z" />
+              <path d="M16 8 2 22" />
+              <path d="M17.5 15H9" />
+            </g>
+          </svg>
           <span className="font-display font-bold text-xl tracking-wide text-slate-100 group-hover:text-amber-300 transition-colors">{t('accueilTitre')}</span>
         </button>
         <div className="flex gap-3">
