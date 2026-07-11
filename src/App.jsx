@@ -12,6 +12,9 @@ import {
   imageFrDreamborn,
   urlImagePourExport,
   cleCarteFr,
+  ENCRE_BLIND,
+  estCartePromo,
+  choisirImpressionsClassiques,
 } from './lorcana'
 import { PastilleEncre } from './composants/PastilleEncre'
 
@@ -238,11 +241,13 @@ export default function App() {
       setRechercheChargement(true)
       let resultats = []
       try {
-        const params = new URLSearchParams({ q: `name:"${rechercheTerme}"` })
+        const params = new URLSearchParams({ q: `name:"${termeSaisi}"`, unique: 'prints' })
         const reponse = await fetch(`https://api.lorcast.com/v0/cards/search?${params.toString()}`)
         if (reponse.ok) {
           const donnees = await reponse.json()
-          resultats = Array.isArray(donnees) ? donnees : (donnees.results || donnees.data || [])
+          const impressions = Array.isArray(donnees) ? donnees : (donnees.results || donnees.data || [])
+          // Une seule carte par nom+version, impression classique de préférence (jamais promo)
+          resultats = choisirImpressionsClassiques(impressions, normaliserTexte).filter(c => !estCartePromo(c))
         }
       } catch (err) { console.error(err) }
 
@@ -320,17 +325,19 @@ export default function App() {
           : `name:"${nomBrut}"`
 
         try {
-          const params = new URLSearchParams({ q: requeteAPI })
+          const params = new URLSearchParams({ q: requeteAPI, unique: 'prints' })
           let reponse = await fetch(`https://api.lorcast.com/v0/cards/search?${params.toString()}`)
           if (!reponse.ok && nomBrut.includes(' - ')) {
-            const paramsSecours = new URLSearchParams({ q: `name:"${nomBrut.split(' - ')[0].trim()}"` })
+            const paramsSecours = new URLSearchParams({ q: `name:"${nomBrut.split(' - ')[0].trim()}"`, unique: 'prints' })
             reponse = await fetch(`https://api.lorcast.com/v0/cards/search?${paramsSecours.toString()}`)
           }
           let carteTrouvee = null
           if (reponse.ok) {
             const donnees = await reponse.json()
-            const resultats = Array.isArray(donnees) ? donnees : (donnees.results || donnees.data || [])
-            if (resultats.length > 0) carteTrouvee = resultats[0]
+            const impressions = Array.isArray(donnees) ? donnees : (donnees.results || donnees.data || [])
+            // On importe uniquement l'impression classique (jamais les promos)
+            const resultats = choisirImpressionsClassiques(impressions, normaliserTexte)
+            carteTrouvee = resultats.find(c => !estCartePromo(c)) || resultats[0] || null
           }
           // Liste écrite avec des noms français ? On tente la correspondance FR.
           if (!carteTrouvee && langue === 'fr') {
@@ -458,6 +465,24 @@ export default function App() {
   const maxCartesSurUnCout = Math.max(...Object.values(distributionCouts), 1)
 
   const gererClicAdversaireEncre = (encreId) => {
+    // « Blind » : bicolorité adverse inconnue — exclusif avec le choix des encres
+    if (encreId === ENCRE_BLIND) {
+      if (adversaireEncres.includes(ENCRE_BLIND)) {
+        setAdversaireEncres([])
+        setArchetypeAdverse('')
+      } else {
+        // En blind, pas d'archétype à saisir : on passe directement au choix de position
+        setAdversaireEncres([ENCRE_BLIND])
+        setArchetypeAdverse('Blind')
+        setSousVuePlaybook('position')
+      }
+      return
+    }
+    if (adversaireEncres.includes(ENCRE_BLIND)) {
+      setAdversaireEncres([encreId])
+      setArchetypeAdverse('')
+      return
+    }
     if (adversaireEncres.includes(encreId)) {
       setAdversaireEncres(adversaireEncres.filter(id => id !== encreId))
       setArchetypeAdverse('')
@@ -467,9 +492,11 @@ export default function App() {
     }
   }
 
+  const selectionAdverseValide = adversaireEncres.length === 2 || adversaireEncres.includes(ENCRE_BLIND)
+
   // FUSION : La clé est globale pour le Matchup, elle n'inclut plus la position
   const genererCleStrategie = (archetypeNom) => {
-    if (!deckAffiche || adversaireEncres.length !== 2) return ''
+    if (!deckAffiche || !selectionAdverseValide) return ''
     const adversaireCle = [...adversaireEncres].sort().join('-')
     const nomSain = archetypeNom.replace(/\s+/g, '-').trim()
     return `${deckAffiche.id}_vs_${adversaireCle}__${nomSain}`
@@ -1108,7 +1135,9 @@ export default function App() {
                         </span>
                         <div className="flex justify-between items-center mt-2">
                           <span className="text-sm font-medium text-purple-400 italic">
-                            {t('archetype')} : <span className="text-slate-300 font-semibold">{p.archetypeAdverse}</span>
+                            {p.archetypeAdverse === 'Blind'
+                              ? <span className="text-slate-300 font-semibold">{langue === 'fr' ? 'Bicolorité inconnue' : 'Unknown inks'}</span>
+                              : <>{t('archetype')} : <span className="text-slate-300 font-semibold">{p.archetypeAdverse}</span></>}
                           </span>
                           <span className="text-[10px] bg-slate-950 px-2 py-1 rounded-md text-slate-500 font-bold border border-slate-850">
                             {Object.keys(p.positions || {}).length} configurations
@@ -1135,7 +1164,7 @@ export default function App() {
 
                   <div className="border-t border-slate-900 pt-6">
                     <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 text-center mb-4">{t('choixBicolo')}</h3>
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-7">
                       {ENCRES.map((encre) => {
                         const estSelectionnee = adversaireEncres.includes(encre.id)
                         return (
@@ -1149,10 +1178,18 @@ export default function App() {
                           </button>
                         )
                       })}
+                      {/* Matchup à l'aveugle : la bicolorité adverse est inconnue */}
+                      <button
+                        onClick={() => gererClicAdversaireEncre(ENCRE_BLIND)}
+                        className={`p-3 rounded-xl font-bold transition-all text-xs bg-slate-900 text-slate-200 border-2 border-dashed ${adversaireEncres.includes(ENCRE_BLIND) ? 'border-white/80 ring-2 ring-white/60 scale-105 opacity-100' : 'border-slate-600 opacity-50 hover:opacity-90'}`}
+                        title={langue === 'fr' ? 'Deck adverse inconnu' : 'Unknown opponent deck'}
+                      >
+                        Blind
+                      </button>
                     </div>
                   </div>
 
-                  {adversaireEncres.length === 2 && (
+                  {selectionAdverseValide && !adversaireEncres.includes(ENCRE_BLIND) && (
                     <div className="border-t border-slate-900 pt-6 space-y-4">
                       <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 text-center">{t('choixArchetype')}</h3>
                       <div className="max-w-md mx-auto">
@@ -1184,7 +1221,7 @@ export default function App() {
                     <h2 className="text-2xl font-display font-black mt-1 flex items-center justify-center gap-2 flex-wrap">
                       <span>vs</span>
                       {adversaireEncres.map(id => <PastilleEncre key={id} id={id} taille="w-5 h-5" langue={langue} />)}
-                      <span>{adversaireEncres.map(id => ENCRES.find(e => e.id === id)?.nom[langue] || id).join(' / ')} ({archetypeAdverse})</span>
+                      <span>{adversaireEncres.map(id => ENCRES.find(e => e.id === id)?.nom[langue] || id).join(' / ')}{archetypeAdverse !== 'Blind' ? ` (${archetypeAdverse})` : ''}</span>
                     </h2>
                     <p className="text-sm text-slate-400 mt-2">{t('choixPositionTour')}</p>
                   </div>
@@ -1259,7 +1296,9 @@ export default function App() {
                         <div>
                           <p className="font-black text-white leading-tight">{archetypeAdverse}</p>
                           <p className="text-[10px] uppercase tracking-widest text-slate-300 mt-0.5">
-                            {adversaireEncres.map(id => ENCRES.find(e => e.id === id)?.nom[langue] || id).join(' / ')}
+                            {adversaireEncres.includes(ENCRE_BLIND)
+                              ? (langue === 'fr' ? 'Bicolorité inconnue' : 'Unknown inks')
+                              : adversaireEncres.map(id => ENCRES.find(e => e.id === id)?.nom[langue] || id).join(' / ')}
                           </p>
                         </div>
                       </div>
@@ -1464,7 +1503,7 @@ export default function App() {
                   </span>
                   <span>
                     <span style={{ display: 'block', fontWeight: 900, fontSize: '26px', lineHeight: 1.1 }}>{archetypeAdverse}</span>
-                    <span style={{ display: 'block', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '3px', color: '#cbd5e1', marginTop: '4px' }}>{adversaireEncres.map(id => ENCRES.find(e => e.id === id)?.nom[langue] || id).join(' / ')}</span>
+                    <span style={{ display: 'block', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '3px', color: '#cbd5e1', marginTop: '4px' }}>{adversaireEncres.includes(ENCRE_BLIND) ? (langue === 'fr' ? 'Bicolorité inconnue' : 'Unknown inks') : adversaireEncres.map(id => ENCRES.find(e => e.id === id)?.nom[langue] || id).join(' / ')}</span>
                   </span>
                 </div>
               </div>

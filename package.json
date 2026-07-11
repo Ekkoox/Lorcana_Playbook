@@ -8,7 +8,7 @@
     "dev": "vite",
     "prebuild": "node scripts/telecharger-cartes-fr.mjs",
     "build": "vite build",
-    "cartes-fr": "node scripts/telecharger-cartes-fr.mjs",
+    "cartes-fr": "node scripts/telecharger-cartes-fr.mjs --force",
     "lint": "eslint .",
     "preview": "vite preview"
   },

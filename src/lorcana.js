@@ -8,7 +8,30 @@ export const ENCRES = [
   { id: 'Steel', nom: { fr: 'Acier', en: 'Steel' }, color: 'bg-slate-500', border: 'border-slate-500', text: 'text-white', hex: '#94a3b8' },
 ]
 
-// Couleur hexadécimale d'une encre (gris ardoise par défaut)
+// Matchup « Blind » : la bicolorité adverse est inconnue
+export const ENCRE_BLIND = 'Blind'
+
+// Une impression est « classique » si elle vient d'un set principal numéroté ;
+// les codes P1, P2, P3, D23, C2, DIS, Q1... sont des promos / éditions spéciales.
+export const estCartePromo = (carte) => !/^\d+$/.test(String(carte?.set?.code || ''))
+
+// Parmi une liste d'impressions Lorcast, garde une seule carte par nom+version
+// en préférant toujours l'impression classique à la promo.
+export const choisirImpressionsClassiques = (resultats, normaliser) => {
+  const parCarte = new Map()
+  for (const carte of resultats) {
+    const cle = `${normaliser(carte.name)}|${normaliser(carte.version || '')}`
+    const existante = parCarte.get(cle)
+    if (!existante) {
+      parCarte.set(cle, carte)
+    } else if (estCartePromo(existante) && !estCartePromo(carte)) {
+      parCarte.set(cle, carte)
+    }
+  }
+  return [...parCarte.values()]
+}
+
+// Couleur hexadécimale d'une encre (gris ardoise par défaut, y compris pour Blind)
 export const couleurEncre = (id) => ENCRES.find(e => e.id === id)?.hex || '#475569'
 
 // Dégradé CSS à partir d'une liste d'encres (1 ou 2 couleurs)

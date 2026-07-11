@@ -24,8 +24,10 @@ const fichierExiste = async () => {
   try { await stat(FICHIER_CIBLE); return true } catch { return false }
 }
 
-if (await fichierEstRecent()) {
-  console.log('[cartes-fr] Données françaises déjà à jour (moins de 7 jours).')
+const forcer = process.argv.includes('--force')
+
+if (!forcer && await fichierEstRecent()) {
+  console.log('[cartes-fr] Données françaises déjà à jour (moins de 7 jours). Utilise --force pour retélécharger.')
   process.exit(0)
 }
 
@@ -36,10 +38,15 @@ try {
   const donnees = await reponse.json()
   if (!Array.isArray(donnees.cards)) throw new Error('Format inattendu : champ "cards" absent')
 
-  // On ne garde que les champs utiles pour alléger le fichier
+  // On ne garde que les champs utiles pour alléger le fichier.
+  // Les variantes promo sont exclues : elles partagent le set et le numéro de
+  // leur carte d'origine et écraseraient la carte normale dans l'index
+  // set|numéro (ex. « Le lapin blanc » promo 29/P3 vs « Akood et Emuti » 29/204).
+  // Signature fiable : leur image vient de /images/fr/promoX/ au lieu de /setXX/.
+  const estPromo = (c) => `${c.images?.thumbnail || ''}${c.images?.full || ''}`.includes('/promo')
   const allege = {
     cards: donnees.cards
-      .filter(c => c.setCode != null && c.number != null)
+      .filter(c => c.setCode != null && c.number != null && !estPromo(c))
       .map(c => ({
         setCode: c.setCode,
         number: c.number,
