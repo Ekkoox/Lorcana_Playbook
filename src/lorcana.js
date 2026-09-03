@@ -15,16 +15,23 @@ export const ENCRE_BLIND = 'Blind'
 // les codes P1, P2, P3, D23, C2, DIS, Q1... sont des promos / éditions spéciales.
 export const estCartePromo = (carte) => !/^\d+$/.test(String(carte?.set?.code || ''))
 
+// Raretés « alternatives » : on veut toujours la version de base d'une carte,
+// jamais son alternative de collection.
+const RARETES_SPECIALES = ['enchanted', 'epic', 'iconic', 'promo']
+export const estRareteSpeciale = (carte) =>
+  RARETES_SPECIALES.includes(String(carte?.rarity || '').toLowerCase())
+
+// Une impression est « de base » si elle n'est ni promo ni d'une rareté alternative
+export const estImpressionDeBase = (carte) => !estCartePromo(carte) && !estRareteSpeciale(carte)
+
 // Parmi une liste d'impressions Lorcast, garde une seule carte par nom+version
-// en préférant toujours l'impression classique à la promo.
+// en préférant toujours l'impression de base (ni promo, ni enchantée/épique/iconique).
 export const choisirImpressionsClassiques = (resultats, normaliser) => {
   const parCarte = new Map()
   for (const carte of resultats) {
     const cle = `${normaliser(carte.name)}|${normaliser(carte.version || '')}`
     const existante = parCarte.get(cle)
-    if (!existante) {
-      parCarte.set(cle, carte)
-    } else if (estCartePromo(existante) && !estCartePromo(carte)) {
+    if (!existante || (!estImpressionDeBase(existante) && estImpressionDeBase(carte))) {
       parCarte.set(cle, carte)
     }
   }

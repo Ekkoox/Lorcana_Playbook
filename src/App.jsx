@@ -13,7 +13,7 @@ import {
   urlImagePourExport,
   cleCarteFr,
   ENCRE_BLIND,
-  estCartePromo,
+  estImpressionDeBase,
   choisirImpressionsClassiques,
 } from './lorcana'
 import { PastilleEncre } from './composants/PastilleEncre'
@@ -302,8 +302,9 @@ export default function App() {
         if (reponse.ok) {
           const donnees = await reponse.json()
           const impressions = Array.isArray(donnees) ? donnees : (donnees.results || donnees.data || [])
-          // Une seule carte par nom+version, impression classique de préférence (jamais promo)
-          resultats = choisirImpressionsClassiques(impressions, normaliserTexte).filter(c => !estCartePromo(c))
+          // Une seule carte par nom+version, toujours l'impression de base
+          // (ni promo, ni enchantée / épique / iconique)
+          resultats = choisirImpressionsClassiques(impressions, normaliserTexte).filter(estImpressionDeBase)
         }
       } catch (err) { console.error(err) }
 
@@ -391,9 +392,9 @@ export default function App() {
           if (reponse.ok) {
             const donnees = await reponse.json()
             const impressions = Array.isArray(donnees) ? donnees : (donnees.results || donnees.data || [])
-            // On importe uniquement l'impression classique (jamais les promos)
+            // On importe uniquement la version de base de la carte
             const resultats = choisirImpressionsClassiques(impressions, normaliserTexte)
-            carteTrouvee = resultats.find(c => !estCartePromo(c)) || resultats[0] || null
+            carteTrouvee = resultats.find(estImpressionDeBase) || resultats[0] || null
           }
           // Liste écrite avec des noms français ? On tente la correspondance FR.
           if (!carteTrouvee && langue === 'fr') {
