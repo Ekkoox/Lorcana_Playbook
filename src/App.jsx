@@ -623,16 +623,10 @@ export default function App() {
     }, 0)
   }
 
+  // Pas de limite d'exemplaires dans le séquenceur : une même carte peut réapparaître
+  // à plusieurs tours (shift, retour en main, réanimation...). Le mulligan, lui, reste limité.
   const ajouterCarteAuTourPlaybook = (tourNumero, carte) => {
     if (!carte || !deckAffiche) return
-
-    const quantiteDansDeck = deckAffiche.cartes.find(c => c.id === carte.id)?.quantite || 0
-    const quantiteDejaAffectee = obtenirOccurencesCarteDansTours(carte.id)
-
-    if (quantiteDejaAffectee >= quantiteDansDeck) {
-      alert("Toutes les copies de cette carte sont déjà utilisées dans les tours.")
-      return
-    }
 
     const nouveauxTours = toursPlaybook.map(tour => {
       if (tour.tour !== tourNumero) return tour
@@ -1671,14 +1665,18 @@ export default function App() {
               <div className="p-6 overflow-y-auto grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 flex-1 bg-slate-900/60">
                 {cartesTrieesParCout.map((carte) => {
                   const infosCarte = extraireInfosCarteLocale(carte)
-                  const dejaUtilisee = obtenirOccurencesCarteDansTours(carte.id) >= (deckAffiche.cartes.find(c => c.id === carte.id)?.quantite || 0)
+                  const nbUtilisee = obtenirOccurencesCarteDansTours(carte.id)
                   return (
                     <button
                       key={carte.id}
                       onClick={() => ajouterCarteAuTourPlaybook(tourPlaybookEnSelection, carte)}
-                      disabled={dejaUtilisee}
-                      className={`bg-slate-950 p-2 rounded-xl border border-slate-800 flex flex-col justify-between items-center transition-all text-left relative group aspect-3/4 ${dejaUtilisee ? 'opacity-30 cursor-not-allowed' : 'hover:border-purple-500 cursor-pointer'}`}
+                      className="bg-slate-950 p-2 rounded-xl border border-slate-800 flex flex-col justify-between items-center transition-all text-left relative group aspect-3/4 hover:border-purple-500 cursor-pointer"
                     >
+                      {nbUtilisee > 0 && (
+                        <span className="absolute -top-2 -right-2 z-10 bg-purple-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-md" title="Déjà placée dans le séquenceur">
+                          x{nbUtilisee}
+                        </span>
+                      )}
                       <img src={infosCarte.image} alt={infosCarte.name} onError={(e) => gererErreurImage(e, infosCarte.imageSecours)} className="w-full h-auto rounded-lg shadow-md mb-1" />
                       <span className="text-[10px] font-bold text-slate-400 truncate w-full text-center">{infosCarte.name}</span>
                       <div className="absolute inset-0 bg-purple-900/20 opacity-0 group-hover:opacity-100 flex items-center justify-center rounded-xl transition-opacity">
