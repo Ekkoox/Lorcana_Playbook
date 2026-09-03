@@ -18,14 +18,66 @@ import {
 } from './lorcana'
 import { PastilleEncre } from './composants/PastilleEncre'
 
+// Navigation mémorisée : au rechargement (F5) on revient là où on était.
+// Tout est calculé une seule fois ici, avant le premier rendu, pour éviter
+// un aller-retour par l'accueil.
+const CLE_NAVIGATION = 'lorcana_playbook_navigation'
+const TOURS_PAR_DEFAUT = [
+  { tour: 1, cartesOptimales: [], note: '' },
+  { tour: 2, cartesOptimales: [], note: '' },
+  { tour: 3, cartesOptimales: [], note: '' },
+]
+
+const lireStockage = (cle, valeurParDefaut) => {
+  try {
+    const brut = localStorage.getItem(cle)
+    return brut ? JSON.parse(brut) : valeurParDefaut
+  } catch {
+    return valeurParDefaut
+  }
+}
+
+const navigationSauvegardee = (() => {
+  const nav = lireStockage(CLE_NAVIGATION, {}) || {}
+  const decks = lireStockage('lorcana_playbook_tous_les_decks', []) || []
+  const strategies = lireStockage('lorcana_playbook_strategies', {}) || {}
+
+  const vide = { pageActive: 'accueil', indexDeckActif: 0, sousVuePlaybook: 'menu', positionJoueur: 'commence', adversaireEncres: [], archetypeAdverse: '', plan: null }
+
+  // Une page de deck n'a de sens que s'il reste au moins un deck
+  if ((nav.pageActive === 'mes-decks' || nav.pageActive === 'playbook') && decks.length === 0) return vide
+  const indexDeckActif = nav.indexDeckActif < decks.length ? nav.indexDeckActif : 0
+
+  const base = { ...vide, ...nav, indexDeckActif, plan: null }
+  if (base.pageActive !== 'playbook' || (base.sousVuePlaybook !== 'creer' && base.sousVuePlaybook !== 'position')) return base
+
+  // Plan en cours : on vérifie qu'il est toujours valide, puis on recharge son contenu
+  const encres = base.adversaireEncres || []
+  const selectionValide = encres.length === 2 || encres.includes('Blind')
+  const deck = decks[indexDeckActif]
+  if (!deck || !selectionValide || !base.archetypeAdverse) {
+    return { ...base, sousVuePlaybook: 'menu', adversaireEncres: [], archetypeAdverse: '' }
+  }
+  const cle = `${deck.id}_vs_${[...encres].sort().join('-')}__${base.archetypeAdverse.replace(/\s+/g, '-').trim()}`
+  const donneesPos = strategies[cle]?.positions?.[base.positionJoueur]
+  return {
+    ...base,
+    plan: {
+      mulliganCartes: donneesPos?.mulliganCartes || Array(7).fill(null),
+      toursPlaybook: donneesPos?.toursPlaybook || TOURS_PAR_DEFAUT,
+      lignesPlay: donneesPos?.lignesPlay || '',
+    },
+  }
+})()
+
 export default function App() {
 
-  const [pageActive, setPageActive] = useState('accueil')
+  const [pageActive, setPageActive] = useState(navigationSauvegardee.pageActive || 'accueil')
   const [texteImport, setTexteImport] = useState('')
   const [nomDeck, setNomDeck] = useState('')
   const [chargement, setChargement] = useState(false)
   const [erreur, setErreur] = useState('')
-  const [indexDeckActif, setIndexDeckActif] = useState(0)
+  const [indexDeckActif, setIndexDeckActif] = useState(navigationSauvegardee.indexDeckActif || 0)
 
   const [langue, setLangue] = useState(() => localStorage.getItem('lorcana_playbook_langue') || 'fr')
   const t = (cleTexte) => TRADS[langue][cleTexte] || TRADS['fr'][cleTexte]
@@ -37,17 +89,13 @@ export default function App() {
   const [quantiteEdition, setQuantiteEdition] = useState(4)
   const [rechercheChargement, setRechercheChargement] = useState(false)
 
-  const [sousVuePlaybook, setSousVuePlaybook] = useState('menu')
-  const [positionJoueur, setPositionJoueur] = useState('commence') // 'commence' ou 'second'
-  const [adversaireEncres, setAdversaireEncres] = useState([])
-  const [archetypeAdverse, setArchetypeAdverse] = useState('')
-  const [lignesPlayTexte, setLignesPlayTexte] = useState('')
-  const [mulliganCartes, setMulliganCartes] = useState(Array(7).fill(null))
-  const [toursPlaybook, setToursPlaybook] = useState([
-    { tour: 1, cartesOptimales: [], note: '' },
-    { tour: 2, cartesOptimales: [], note: '' },
-    { tour: 3, cartesOptimales: [], note: '' },
-  ])
+  const [sousVuePlaybook, setSousVuePlaybook] = useState(navigationSauvegardee.sousVuePlaybook || 'menu')
+  const [positionJoueur, setPositionJoueur] = useState(navigationSauvegardee.positionJoueur || 'commence') // 'commence' ou 'second'
+  const [adversaireEncres, setAdversaireEncres] = useState(navigationSauvegardee.adversaireEncres || [])
+  const [archetypeAdverse, setArchetypeAdverse] = useState(navigationSauvegardee.archetypeAdverse || '')
+  const [lignesPlayTexte, setLignesPlayTexte] = useState(navigationSauvegardee.plan?.lignesPlay || '')
+  const [mulliganCartes, setMulliganCartes] = useState(navigationSauvegardee.plan?.mulliganCartes || Array(7).fill(null))
+  const [toursPlaybook, setToursPlaybook] = useState(navigationSauvegardee.plan?.toursPlaybook || TOURS_PAR_DEFAUT)
   const [tourPlaybookEnSelection, setTourPlaybookEnSelection] = useState(null)
   const [modaleIndexOuvert, setModaleIndexOuvert] = useState(null)
   const [derniereSauvegarde, setDerniereSauvegarde] = useState(null)
@@ -74,6 +122,14 @@ export default function App() {
   useEffect(() => { localStorage.setItem('lorcana_playbook_tous_les_decks', JSON.stringify(listeDecks)) }, [listeDecks])
   useEffect(() => { localStorage.setItem('lorcana_playbook_strategies', JSON.stringify(strategies)) }, [strategies])
   useEffect(() => { localStorage.setItem('lorcana_playbook_langue', langue) }, [langue])
+
+  // Mémorise la page courante pour la retrouver après un rechargement (F5)
+  useEffect(() => {
+    localStorage.setItem(CLE_NAVIGATION, JSON.stringify({
+      pageActive, indexDeckActif, sousVuePlaybook, positionJoueur, adversaireEncres, archetypeAdverse,
+    }))
+  }, [pageActive, indexDeckActif, sousVuePlaybook, positionJoueur, adversaireEncres, archetypeAdverse])
+
 
   // --- Connexion Discord + sauvegarde cloud (Supabase) ---
   const [session, setSession] = useState(null)
