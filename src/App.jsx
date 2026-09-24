@@ -155,19 +155,9 @@ export default function App() {
   const [statsOuvertes, setStatsOuvertes] = useState(false)
   const [decksDuelsInk, setDecksDuelsInk] = useState([])
   const [importDuelsInkEnCours, setImportDuelsInkEnCours] = useState(false)
-  const [slugsCartes, setSlugsCartes] = useState(null)
   const [voirTousDecksDuelsInk, setVoirTousDecksDuelsInk] = useState(false)
   const [selecteurDuelsInkOuvert, setSelecteurDuelsInkOuvert] = useState(false)
 
-  useEffect(() => {
-    if ((pageActive !== 'importer' && !selecteurDuelsInkOuvert) || slugsCartes) return
-    let annule = false
-    fetch('/cartes-slugs.json')
-      .then(r => (r.ok ? r.json() : null))
-      .then(d => { if (!annule && d) setSlugsCartes(d) })
-      .catch(err => console.error('Table de correspondance des cartes indisponible :', err))
-    return () => { annule = true }
-  }, [pageActive, selecteurDuelsInkOuvert, slugsCartes])
 
   // Si une liste Duels.ink est déjà liée à un deck du site, elle en prend le nom
   const nomDeckDuelsInk = (deck) => {
@@ -178,13 +168,18 @@ export default function App() {
       .join(' / ')
   }
 
-  // Quelques cartes du deck, pour le reconnaître d'un coup d'œil
+  // Quelques cartes du deck, pour le reconnaître d'un coup d'œil.
+  // Les identifiants Duels.ink sont au format « set-numéro », la même clé que
+  // l'index des cartes françaises.
   const apercuDeckDuelsInk = (deck) => {
-    if (!slugsCartes || !deck?.decklist?.length) return ''
+    if (!cartesFr || !deck?.decklist?.length) return ''
     return [...deck.decklist]
       .sort((a, b) => (b.count - a.count) || String(a.cardId).localeCompare(String(b.cardId)))
       .slice(0, 3)
-      .map(c => (slugsCartes[c.cardId] || c.cardId).split(' - ')[0])
+      .map(c => {
+        const cle = String(c.cardId ?? '').replace(/[-_/]/, '|')
+        return (cartesFr.get(cle)?.fullName || c.cardId).split(' - ')[0]
+      })
       .join(' · ')
   }
   const [deckDuelsInkALier, setDeckDuelsInkALier] = useState(null)
@@ -356,8 +351,10 @@ export default function App() {
   // Dictionnaire des cartes françaises, chargé dès que le site passe en français
   const [cartesFr, setCartesFr] = useState(null)
 
+  // Chargé quelle que soit la langue : sert aussi à nommer les cartes des
+  // listes Duels.ink, dont les identifiants sont au format « set-numéro ».
   useEffect(() => {
-    if (langue !== 'fr' || cartesFr) return
+    if (cartesFr) return
     let annule = false
     chargerCartesFr()
       .then(index => { if (!annule) setCartesFr(index) })
@@ -446,32 +443,70 @@ export default function App() {
     return null
   }
 
-  // Convertit une liste Duels.ink ([{cardId, count}]) en liste texte anglaise,
-  // via la table de slugs générée au build depuis LorcanaJSON.
+  // Duels.ink identifie les cartes par « set-numéro » (ex. « 10-17 ») : on
+  // interroge donc Lorcast par set et numéro, ce qui est exact — pas de
+  // correspondance approximative par nom.
+  const recupererCarteParNumero = async (codeSet, numero) => {
+    try {
+      const reponse = await fetch(`https://api.lorcast.com/v0/cards/${codeSet}/${numero}`)
+      if (!reponse.ok) return null
+      const carte = await reponse.json()
+      if (estImpressionDeBase(carte)) return carte
+
+      // Numéro d'une impression alternative (enchantée, épique…) : on lui
+      // substitue la version de base de la même carte.
+      const requete = `name:"${carte.name}"${carte.version ? ` version:"${carte.version}"` : ''}`
+      const params = new URLSearchParams({ q: requete, unique: 'prints' })
+      const secours = await fetch(`https://api.lorcast.com/v0/cards/search?${params}`)
+      if (secours.ok) {
+        const donnees = await secours.json()
+        const impressions = Array.isArray(donnees) ? donnees : (donnees.results || donnees.data || [])
+        const base = choisirImpressionsClassiques(impressions, normaliserTexte).find(estImpressionDeBase)
+        if (base) return base
+      }
+      return carte
+    } catch (err) {
+      console.error(err)
+      return null
+    }
+  }
+
   const importerDeckDuelsInk = async (deckDuelsInk) => {
     if (!deckDuelsInk?.decklist?.length) return
     setImportDuelsInkEnCours(true)
     setErreur('')
     try {
-      const reponse = await fetch('/cartes-slugs.json')
-      if (!reponse.ok) throw new Error('Table de correspondance des cartes introuvable')
-      const slugs = await reponse.json()
-
-      const lignes = []
+      const cartes = []
       const introuvables = []
       for (const entree of deckDuelsInk.decklist) {
-        const nom = slugs[entree.cardId]
-        if (nom) lignes.push(`${entree.count} ${nom}`)
+        const correspondance = String(entree.cardId ?? '').match(/^([A-Za-z0-9]+)[-_/](\d+)$/)
+        if (!correspondance) { introuvables.push(entree.cardId); continue }
+        const carte = await recupererCarteParNumero(correspondance[1], correspondance[2])
+        if (carte) cartes.push({ ...carte, quantite: entree.count })
         else introuvables.push(entree.cardId)
+        // Duels.ink et Lorcast demandent d'espacer les requêtes
+        await new Promise(resoudre => setTimeout(resoudre, 80))
       }
-      if (lignes.length === 0) throw new Error('Aucune carte reconnue dans cette liste')
 
-      setTexteImport(lignes.join('\n'))
-      setNomDeck(deckDuelsInk.nom || deckDuelsInk.encres || 'Deck Duels.ink')
-      setDeckDuelsInkALier(deckDuelsInk.deck_id)
+      if (cartes.length === 0) {
+        const exemples = deckDuelsInk.decklist.slice(0, 3).map(c => c.cardId).join(', ')
+        throw new Error(`Aucune carte reconnue. Identifiants reçus : ${exemples}`)
+      }
+
+      const nouveauDeck = {
+        // eslint-disable-next-line react-hooks/purity -- appelé depuis un gestionnaire d'événement
+        id: Date.now().toString(),
+        nom: nomDeckDuelsInk(deckDuelsInk),
+        cartes,
+        duelsinkDeckId: deckDuelsInk.deck_id,
+      }
+      setListeDecks([nouveauDeck, ...listeDecks])
+      setIndexDeckActif(0)
       setSelecteurDuelsInkOuvert(false)
+      setPageActive('mes-decks')
+
       if (introuvables.length > 0) {
-        setErreur(`${introuvables.length} carte(s) non reconnue(s) : ${introuvables.slice(0, 4).join(', ')}${introuvables.length > 4 ? '…' : ''}. Complète-les à la main après l'import.`)
+        setErreur(`${introuvables.length} carte(s) non reconnue(s) : ${introuvables.slice(0, 4).join(', ')}${introuvables.length > 4 ? '…' : ''}. Ajoute-les à la main.`)
       }
     } catch (err) {
       console.error(err)
