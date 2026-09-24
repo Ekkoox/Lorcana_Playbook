@@ -226,6 +226,9 @@ export default function App() {
       if (annule) return
       if (error) { console.error('Statut Duels.ink indisponible :', error); return }
       setStatutDuelsInk(data)
+      // Sans compte connecté, les statistiques personnelles sont vides :
+      // on présente d'emblée le meta global, accessible à tous.
+      if (data && !data.connecte) setSourceStats('duelsink_meta')
     }
     charger()
     return () => { annule = true }
@@ -1263,10 +1266,11 @@ export default function App() {
             <div className="panneau p-6 rounded-2xl space-y-4">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <h2 className="text-xl font-bold">{t('nouveauDeckTitre')}</h2>
-                {decksDuelsInkComplets.length > 0 && (
+                {session && (
                   <button
-                    onClick={() => setSelecteurDuelsInkOuvert(true)}
+                    onClick={() => (decksDuelsInkComplets.length > 0 ? setSelecteurDuelsInkOuvert(true) : ouvrirProfil())}
                     className="btn-ghost px-4 py-2 rounded-xl text-xs font-bold"
+                    title={decksDuelsInkComplets.length > 0 ? t('importDuelsInkTitre') : t('duelsinkPasConnecte')}
                   >
                     {t('importDuelsInkTitre')}
                   </button>
@@ -1376,9 +1380,9 @@ export default function App() {
                 <div className="flex gap-3 w-full sm:w-auto">
                   <button
                     onClick={() => setStatsOuvertes(true)}
-                    disabled={lignesWinrate.length === 0}
+                    disabled={!session}
                     className="flex-1 sm:flex-none btn-ghost px-5 py-2.5 rounded-xl text-sm font-bold disabled:opacity-30 disabled:cursor-not-allowed"
-                    title={winratesPlay.length === 0 && winratesDraw.length === 0 ? t('statsVides') : t('statsTitre')}
+                    title={t('statsTitre')}
                   >
                     {t('statsTitre')}
                   </button>
@@ -2019,10 +2023,22 @@ export default function App() {
                   ))}
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <TableauWinrates titre={t('joueurCommence')} lignes={winratesPlay} langue={langue} />
-                  <TableauWinrates titre={t('joueurSecond')} lignes={winratesDraw} langue={langue} />
-                </div>
+                {sourceStats === 'duelsink_perso' && !statutDuelsInk?.connecte ? (
+                  <div className="panneau rounded-2xl p-6 text-center space-y-3">
+                    <p className="text-sm text-slate-300">{t('duelsinkPasConnecte')}</p>
+                    <button
+                      onClick={() => { setStatsOuvertes(false); ouvrirProfil() }}
+                      className="btn-or px-5 py-2.5 rounded-xl text-xs"
+                    >
+                      {t('duelsinkConnecterCompte')}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <TableauWinrates titre={t('joueurCommence')} lignes={winratesPlay} langue={langue} />
+                    <TableauWinrates titre={t('joueurSecond')} lignes={winratesDraw} langue={langue} />
+                  </div>
+                )}
                 {decksDuelsInk.length > 0 && (
                   <div className="panneau rounded-xl p-3 flex items-center gap-3 flex-wrap">
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-400">{t('lierDeckLabel')}</label>
