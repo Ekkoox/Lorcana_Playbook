@@ -11,7 +11,8 @@
     "cartes-fr": "node scripts/telecharger-cartes-fr.mjs --force",
     "duelsink": "node --env-file=.env scripts/importer-duelsink.mjs",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "duelsink-meta": "node --env-file=.env scripts/importer-duelsink-meta.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.0",

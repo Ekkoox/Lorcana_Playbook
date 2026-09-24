@@ -1,10 +1,26 @@
 {
   "rewrites": [
-    { "source": "/img-lorcast/:chemin*", "destination": "https://cards.lorcast.io/:chemin*" },
-    { "source": "/img-dreamborn/:chemin*", "destination": "https://cdn.dreamborn.ink/:chemin*" },
-    { "source": "/img-ravensburger/:chemin*", "destination": "https://api.lorcana.ravensburger.com/:chemin*" }
+    {
+      "source": "/img-lorcast/:chemin*",
+      "destination": "https://cards.lorcast.io/:chemin*"
+    },
+    {
+      "source": "/img-dreamborn/:chemin*",
+      "destination": "https://cdn.dreamborn.ink/:chemin*"
+    },
+    {
+      "source": "/img-ravensburger/:chemin*",
+      "destination": "https://api.lorcana.ravensburger.com/:chemin*"
+    }
   ],
   "crons": [
-    { "path": "/api/import-duelsink", "schedule": "0 5 * * *" }
+    {
+      "path": "/api/import-duelsink",
+      "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/import-duelsink-meta",
+      "schedule": "0 6 * * *"
+    }
   ]
 }

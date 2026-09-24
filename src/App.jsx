@@ -149,9 +149,9 @@ export default function App() {
   // --- Statistiques de matchup (Duels.ink) ---
   // La source est volontairement paramétrable : 'duelsink_perso' aujourd'hui,
   // 'duelsink_meta' le jour où la matrice communautaire sera disponible.
-  // eslint-disable-next-line no-unused-vars -- setSourceStats servira à basculer vers 'duelsink_meta'
   const [sourceStats, setSourceStats] = useState('duelsink_perso')
   const [lignesWinrate, setLignesWinrate] = useState([])
+  const [dateDonneesStats, setDateDonneesStats] = useState(null)
   const [statsOuvertes, setStatsOuvertes] = useState(false)
   const [decksDuelsInk, setDecksDuelsInk] = useState([])
   const [importDuelsInkEnCours, setImportDuelsInkEnCours] = useState(false)
@@ -213,7 +213,7 @@ export default function App() {
       if (!supabase || !session?.user) { setLignesWinrate([]); return }
       let requete = supabase
         .from('meta_winrates')
-        .select('deck_encres, deck_ref, adversaire_encres, sur_le_play, victoires, defaites, parties')
+        .select('deck_encres, deck_ref, adversaire_encres, sur_le_play, victoires, defaites, parties, maj_le')
         .eq('source', sourceStats)
       // Les données globales ne sont rattachées à aucun joueur
       requete = sourceStats === 'duelsink_perso'
@@ -223,6 +223,7 @@ export default function App() {
       if (annule) return
       if (error) { console.error('Chargement des winrates impossible :', error); return }
       setLignesWinrate(data || [])
+      setDateDonneesStats(data?.[0]?.maj_le || null)
     }
     charger()
     return () => { annule = true }
@@ -631,7 +632,7 @@ export default function App() {
     ? decksDuelsInkComplets
     : decksDuelsInkPertinents
 
-  const refDeckLie = deckAffiche?.duelsinkDeckId || null
+  const refDeckLie = sourceStats === 'duelsink_perso' ? (deckAffiche?.duelsinkDeckId || null) : null
   const SEUIL_REPLI = 20
 
   // Pour une position donnée : on privilégie les chiffres du deck lié, et on
@@ -1262,7 +1263,7 @@ export default function App() {
                 <div className="flex gap-3 w-full sm:w-auto">
                   <button
                     onClick={() => setStatsOuvertes(true)}
-                    disabled={winratesPlay.length === 0 && winratesDraw.length === 0}
+                    disabled={lignesWinrate.length === 0}
                     className="flex-1 sm:flex-none btn-ghost px-5 py-2.5 rounded-xl text-sm font-bold disabled:opacity-30 disabled:cursor-not-allowed"
                     title={winratesPlay.length === 0 && winratesDraw.length === 0 ? t('statsVides') : t('statsTitre')}
                   >
@@ -1885,6 +1886,26 @@ export default function App() {
               </div>
 
               <div className="p-6 overflow-y-auto custom-scrollbar space-y-4">
+                {/* Source des chiffres : mes parties ou le meta communautaire */}
+                <div className="flex gap-2 p-1 bg-slate-950/60 rounded-xl border border-slate-800 w-fit mx-auto">
+                  {[
+                    { cle: 'duelsink_perso', libelle: t('sourcePerso') },
+                    { cle: 'duelsink_meta', libelle: t('sourceMeta') },
+                  ].map(option => (
+                    <button
+                      key={option.cle}
+                      onClick={() => setSourceStats(option.cle)}
+                      className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        sourceStats === option.cle
+                          ? 'bg-amber-500 text-slate-950'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {option.libelle}
+                    </button>
+                  ))}
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <TableauWinrates titre={t('joueurCommence')} lignes={winratesPlay} langue={langue} />
                   <TableauWinrates titre={t('joueurSecond')} lignes={winratesDraw} langue={langue} />
@@ -1906,7 +1927,19 @@ export default function App() {
                     </select>
                   </div>
                 )}
-                <p className="text-[11px] text-slate-500 italic text-center">{t('winratesSource')}</p>
+                <p className="text-[11px] text-slate-500 italic text-center">
+                  {sourceStats === 'duelsink_perso' ? (
+                    t('winratesSource')
+                  ) : (
+                    <>
+                      {t('winratesSourceMeta')}{' '}
+                      <a href="https://duels.ink/stats" target="_blank" rel="noopener noreferrer" className="text-amber-400 hover:underline not-italic font-semibold">
+                        duels.ink/stats
+                      </a>
+                      {dateDonneesStats && ` · ${t('donneesDu')} ${new Date(dateDonneesStats).toLocaleDateString(langue === 'fr' ? 'fr-FR' : 'en-GB')}`}
+                    </>
+                  )}
+                </p>
               </div>
             </div>
           </div>
