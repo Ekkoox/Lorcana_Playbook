@@ -257,11 +257,24 @@ export default function App() {
     setSynchroEnCours(false)
   }
 
-  const connecterDuelsInk = async () => {
-    if (!supabase || !jetonSaisi.trim()) return
+  // Un jeton Duels.ink est une chaîne hexadécimale de 96 caractères :
+  // on peut donc valider la saisie sans rien demander au serveur.
+  const jetonValide = (valeur) => /^[0-9a-fA-F]{96}$/.test(String(valeur || '').trim())
+
+  // Collé depuis leur site : on nettoie et on connecte sans attendre un clic
+  const gererSaisieJeton = (valeur) => {
+    const propre = String(valeur || '').trim()
+    setJetonSaisi(propre)
+    setMessageDuelsInk('')
+    if (jetonValide(propre)) connecterDuelsInk(propre)
+  }
+
+  const connecterDuelsInk = async (jetonFourni = null) => {
+    const jeton = String(jetonFourni ?? jetonSaisi).trim()
+    if (!supabase || !jeton) return
     setSynchroEnCours(true)
     setMessageDuelsInk('')
-    const { error } = await supabase.rpc('connecter_duelsink', { jeton_brut: jetonSaisi.trim() })
+    const { error } = await supabase.rpc('connecter_duelsink', { jeton_brut: jeton })
     setSynchroEnCours(false)
     if (error) { setMessageDuelsInk(error.message); return }
     setJetonSaisi('')
@@ -2144,24 +2157,37 @@ export default function App() {
                     </>
                   ) : (
                     <>
-                      <p className="text-[11px] text-slate-400 leading-relaxed">
-                        {t('duelsinkAide')}{' '}
-                        <a href="https://duels.ink/account" target="_blank" rel="noopener noreferrer" className="text-amber-400 hover:underline font-semibold">
-                          duels.ink/account
-                        </a>
-                      </p>
+                      <p className="text-[11px] text-slate-400 leading-relaxed">{t('duelsinkAide')}</p>
+                      <ol className="text-[11px] text-slate-400 space-y-1.5 list-decimal list-inside">
+                        <li>
+                          {t('duelsinkEtape1')}{' '}
+                          <a href="https://duels.ink/account" target="_blank" rel="noopener noreferrer" className="text-amber-400 hover:underline font-semibold">
+                            duels.ink/account
+                          </a>
+                        </li>
+                        <li>{t('duelsinkEtape2')}</li>
+                        <li>{t('duelsinkEtape3')}</li>
+                      </ol>
                       <div className="flex gap-2">
                         <input
-                          type="password"
+                          type="text"
                           value={jetonSaisi}
-                          onChange={(e) => { setJetonSaisi(e.target.value); setMessageDuelsInk('') }}
+                          onChange={(e) => gererSaisieJeton(e.target.value)}
+                          onPaste={(e) => gererSaisieJeton(e.clipboardData.getData('text'))}
                           placeholder={t('duelsinkPlaceholder')}
-                          className="flex-1 min-w-0 p-3 bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl text-xs outline-none text-slate-200 font-mono"
+                          spellCheck="false"
+                          autoComplete="off"
+                          className={`flex-1 min-w-0 p-3 bg-slate-950 border rounded-xl text-xs outline-none text-slate-200 font-mono truncate ${
+                            jetonSaisi && !jetonValide(jetonSaisi) ? 'border-red-500/50' : 'border-slate-800 focus:border-amber-500'
+                          }`}
                         />
-                        <button onClick={connecterDuelsInk} disabled={synchroEnCours || !jetonSaisi.trim()} className="btn-or px-5 rounded-xl text-xs disabled:opacity-50">
+                        <button onClick={() => connecterDuelsInk()} disabled={synchroEnCours || !jetonValide(jetonSaisi)} className="btn-or px-5 rounded-xl text-xs disabled:opacity-50">
                           {synchroEnCours ? '…' : t('duelsinkConnecter')}
                         </button>
                       </div>
+                      {jetonSaisi && !jetonValide(jetonSaisi) && (
+                        <p className="text-[11px] text-red-400">{t('duelsinkJetonInvalide')}</p>
+                      )}
                     </>
                   )}
                   {messageDuelsInk && <p className="text-[11px] text-slate-300">{messageDuelsInk}</p>}
