@@ -152,6 +152,7 @@ export default function App() {
   const [sourceStats, setSourceStats] = useState('duelsink_perso')
   const [lignesWinrate, setLignesWinrate] = useState([])
   const [dateDonneesStats, setDateDonneesStats] = useState(null)
+  const [statsRechargement, setStatsRechargement] = useState(0)
   const [statsOuvertes, setStatsOuvertes] = useState(false)
   const [decksDuelsInk, setDecksDuelsInk] = useState([])
   const [importDuelsInkEnCours, setImportDuelsInkEnCours] = useState(false)
@@ -200,7 +201,80 @@ export default function App() {
     charger()
     return () => { annule = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user?.id, statsRechargement])
+
+  // --- Compte Duels.ink du joueur ---
+  // Le jeton n'est jamais lisible depuis le navigateur : on passe par des
+  // fonctions Supabase dédiées, et la synchronisation tourne côté serveur.
+  const [statutDuelsInk, setStatutDuelsInk] = useState(null)
+  const [jetonSaisi, setJetonSaisi] = useState('')
+  const [synchroEnCours, setSynchroEnCours] = useState(false)
+  const [messageDuelsInk, setMessageDuelsInk] = useState('')
+
+  const rafraichirStatutDuelsInk = async () => {
+    if (!supabase || !session?.user) { setStatutDuelsInk(null); return }
+    const { data, error } = await supabase.rpc('statut_duelsink')
+    if (error) { console.error('Statut Duels.ink indisponible :', error); return }
+    setStatutDuelsInk(data)
+  }
+
+  useEffect(() => {
+    let annule = false
+    const charger = async () => {
+      if (!supabase || !session?.user) { setStatutDuelsInk(null); return }
+      const { data, error } = await supabase.rpc('statut_duelsink')
+      if (annule) return
+      if (error) { console.error('Statut Duels.ink indisponible :', error); return }
+      setStatutDuelsInk(data)
+    }
+    charger()
+    return () => { annule = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user?.id])
+
+  // La synchronisation tourne côté serveur, authentifiée par la session du joueur
+  const synchroniserDuelsInk = async () => {
+    if (!supabase || !session) return
+    setSynchroEnCours(true)
+    setMessageDuelsInk('')
+    try {
+      const reponse = await fetch('/api/sync-duelsink', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      const resultat = await reponse.json()
+      if (!reponse.ok) throw new Error(resultat.error || 'Synchronisation impossible')
+      setMessageDuelsInk(`${resultat.partiesRecuperees} ${t('partiesImportees')}`)
+      await rafraichirStatutDuelsInk()
+      setStatsRechargement(n => n + 1)
+    } catch (err) {
+      console.error(err)
+      setMessageDuelsInk(String(err.message || err))
+    }
+    setSynchroEnCours(false)
+  }
+
+  const connecterDuelsInk = async () => {
+    if (!supabase || !jetonSaisi.trim()) return
+    setSynchroEnCours(true)
+    setMessageDuelsInk('')
+    const { error } = await supabase.rpc('connecter_duelsink', { jeton_brut: jetonSaisi.trim() })
+    setSynchroEnCours(false)
+    if (error) { setMessageDuelsInk(error.message); return }
+    setJetonSaisi('')
+    await rafraichirStatutDuelsInk()
+    await synchroniserDuelsInk() // première récupération dans la foulée
+  }
+
+  const deconnecterDuelsInk = async () => {
+    if (!supabase) return
+    if (!window.confirm(t('duelsinkDeconnecterConfirme'))) return
+    const { error } = await supabase.rpc('deconnecter_duelsink')
+    if (error) { setMessageDuelsInk(error.message); return }
+    setMessageDuelsInk('')
+    await rafraichirStatutDuelsInk()
+    setStatsRechargement(n => n + 1)
+  }
 
   // --- Profil & RGPD ---
   const [profilOuvert, setProfilOuvert] = useState(false)
@@ -671,7 +745,7 @@ export default function App() {
     charger()
     return () => { annule = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.user?.id, sourceStats, encresDeckAffiche])
+  }, [session?.user?.id, sourceStats, encresDeckAffiche, statsRechargement])
   const SEUIL_REPLI = 20
 
   // Pour une position donnée : on privilégie les chiffres du deck lié, et on
@@ -2018,6 +2092,63 @@ export default function App() {
                   </div>
                   <p className="text-[11px] text-slate-500">{t('pseudoAide')}</p>
                   {messageProfil && <p className="text-xs text-emerald-400 font-bold">{messageProfil}</p>}
+                </div>
+
+                <hr className="filet-dore" />
+
+                {/* Compte Duels.ink : chacun connecte le sien */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">{t('duelsinkTitre')}</h4>
+                    {statutDuelsInk?.connecte && (
+                      <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                        {t('duelsinkConnecte')}
+                      </span>
+                    )}
+                  </div>
+
+                  {statutDuelsInk?.connecte ? (
+                    <>
+                      <p className="text-[11px] text-slate-400">
+                        {statutDuelsInk.derniere_synchro
+                          ? `${t('duelsinkDerniereSynchro')} ${new Date(statutDuelsInk.derniere_synchro).toLocaleString(langue === 'fr' ? 'fr-FR' : 'en-GB')}`
+                          : t('duelsinkJamaisSynchro')}
+                      </p>
+                      {statutDuelsInk.derniere_erreur && (
+                        <p className="text-[11px] text-red-400">{statutDuelsInk.derniere_erreur}</p>
+                      )}
+                      <div className="flex gap-2 flex-wrap">
+                        <button onClick={synchroniserDuelsInk} disabled={synchroEnCours} className="btn-or px-4 py-2 rounded-xl text-xs disabled:opacity-50">
+                          {synchroEnCours ? t('duelsinkSynchroEnCours') : t('duelsinkSynchroniser')}
+                        </button>
+                        <button onClick={deconnecterDuelsInk} className="btn-ghost px-4 py-2 rounded-xl text-xs font-bold">
+                          {t('duelsinkDeconnecter')}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        {t('duelsinkAide')}{' '}
+                        <a href="https://duels.ink/account" target="_blank" rel="noopener noreferrer" className="text-amber-400 hover:underline font-semibold">
+                          duels.ink/account
+                        </a>
+                      </p>
+                      <div className="flex gap-2">
+                        <input
+                          type="password"
+                          value={jetonSaisi}
+                          onChange={(e) => { setJetonSaisi(e.target.value); setMessageDuelsInk('') }}
+                          placeholder={t('duelsinkPlaceholder')}
+                          className="flex-1 min-w-0 p-3 bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl text-xs outline-none text-slate-200 font-mono"
+                        />
+                        <button onClick={connecterDuelsInk} disabled={synchroEnCours || !jetonSaisi.trim()} className="btn-or px-5 rounded-xl text-xs disabled:opacity-50">
+                          {synchroEnCours ? '…' : t('duelsinkConnecter')}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {messageDuelsInk && <p className="text-[11px] text-slate-300">{messageDuelsInk}</p>}
                 </div>
 
                 <hr className="filet-dore" />
