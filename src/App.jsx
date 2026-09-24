@@ -202,29 +202,6 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user?.id])
 
-  useEffect(() => {
-    let annule = false
-    const charger = async () => {
-      if (!supabase || !session?.user) { setLignesWinrate([]); return }
-      let requete = supabase
-        .from('meta_winrates')
-        .select('deck_encres, deck_ref, adversaire_encres, sur_le_play, victoires, defaites, parties, maj_le')
-        .eq('source', sourceStats)
-      // Les données globales ne sont rattachées à aucun joueur
-      requete = sourceStats === 'duelsink_perso'
-        ? requete.eq('user_id', session.user.id)
-        : requete.is('user_id', null)
-      const { data, error } = await requete
-      if (annule) return
-      if (error) { console.error('Chargement des winrates impossible :', error); return }
-      setLignesWinrate(data || [])
-      setDateDonneesStats(data?.[0]?.maj_le || null)
-    }
-    charger()
-    return () => { annule = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.user?.id, sourceStats])
-
   // --- Profil & RGPD ---
   const [profilOuvert, setProfilOuvert] = useState(false)
   const [pseudoEdition, setPseudoEdition] = useState('')
@@ -668,6 +645,33 @@ export default function App() {
     : decksDuelsInkPertinents
 
   const refDeckLie = sourceStats === 'duelsink_perso' ? (deckAffiche?.duelsinkDeckId || null) : null
+
+  // On ne récupère que les lignes de la bicolorité affichée : Supabase plafonne
+  // une requête à 1000 lignes, et l'ensemble des statistiques dépasse ce seuil.
+  useEffect(() => {
+    let annule = false
+    const charger = async () => {
+      if (!supabase || !session?.user || !encresDeckAffiche) { setLignesWinrate([]); return }
+      let requete = supabase
+        .from('meta_winrates')
+        .select('deck_encres, deck_ref, adversaire_encres, sur_le_play, victoires, defaites, parties, maj_le')
+        .eq('source', sourceStats)
+        .eq('deck_encres', encresDeckAffiche)
+        .limit(2000)
+      // Les données globales ne sont rattachées à aucun joueur
+      requete = sourceStats === 'duelsink_perso'
+        ? requete.eq('user_id', session.user.id)
+        : requete.is('user_id', null)
+      const { data, error } = await requete
+      if (annule) return
+      if (error) { console.error('Chargement des winrates impossible :', error); return }
+      setLignesWinrate(data || [])
+      setDateDonneesStats(data?.[0]?.maj_le || null)
+    }
+    charger()
+    return () => { annule = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user?.id, sourceStats, encresDeckAffiche])
   const SEUIL_REPLI = 20
 
   // Pour une position donnée : on privilégie les chiffres du deck lié, et on
