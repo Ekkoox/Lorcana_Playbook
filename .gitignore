@@ -33,3 +33,4 @@ public/cartes-fr.json
 # Clés locales (Supabase, etc.)
 .env
 .env.local
+public/cartes-slugs.json

@@ -17,6 +17,7 @@ import {
   choisirImpressionsClassiques,
 } from './lorcana'
 import { PastilleEncre } from './composants/PastilleEncre'
+import { TableauWinrates } from './composants/TableauWinrates'
 
 // Navigation mémorisée : au rechargement (F5) on revient là où on était.
 // Tout est calculé une seule fois ici, avant le premier rendu, pour éviter
@@ -144,6 +145,89 @@ export default function App() {
     })
     return () => abonnement.subscription.unsubscribe()
   }, [])
+
+  // --- Statistiques de matchup (Duels.ink) ---
+  // La source est volontairement paramétrable : 'duelsink_perso' aujourd'hui,
+  // 'duelsink_meta' le jour où la matrice communautaire sera disponible.
+  // eslint-disable-next-line no-unused-vars -- setSourceStats servira à basculer vers 'duelsink_meta'
+  const [sourceStats, setSourceStats] = useState('duelsink_perso')
+  const [lignesWinrate, setLignesWinrate] = useState([])
+  const [statsOuvertes, setStatsOuvertes] = useState(false)
+  const [decksDuelsInk, setDecksDuelsInk] = useState([])
+  const [importDuelsInkEnCours, setImportDuelsInkEnCours] = useState(false)
+  const [slugsCartes, setSlugsCartes] = useState(null)
+  const [voirTousDecksDuelsInk, setVoirTousDecksDuelsInk] = useState(false)
+  const [selecteurDuelsInkOuvert, setSelecteurDuelsInkOuvert] = useState(false)
+
+  useEffect(() => {
+    if ((pageActive !== 'importer' && !selecteurDuelsInkOuvert) || slugsCartes) return
+    let annule = false
+    fetch('/cartes-slugs.json')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!annule && d) setSlugsCartes(d) })
+      .catch(err => console.error('Table de correspondance des cartes indisponible :', err))
+    return () => { annule = true }
+  }, [pageActive, selecteurDuelsInkOuvert, slugsCartes])
+
+  // Si une liste Duels.ink est déjà liée à un deck du site, elle en prend le nom
+  const nomDeckDuelsInk = (deck) => {
+    const lie = listeDecks.find(d => d.duelsinkDeckId === deck.deck_id)
+    if (lie?.nom) return lie.nom
+    return (deck.encres || '').split('/').filter(Boolean)
+      .map(id => ENCRES.find(e => e.id === id)?.nom[langue] || id)
+      .join(' / ')
+  }
+
+  // Quelques cartes du deck, pour le reconnaître d'un coup d'œil
+  const apercuDeckDuelsInk = (deck) => {
+    if (!slugsCartes || !deck?.decklist?.length) return ''
+    return [...deck.decklist]
+      .sort((a, b) => (b.count - a.count) || String(a.cardId).localeCompare(String(b.cardId)))
+      .slice(0, 3)
+      .map(c => (slugsCartes[c.cardId] || c.cardId).split(' - ')[0])
+      .join(' · ')
+  }
+  const [deckDuelsInkALier, setDeckDuelsInkALier] = useState(null)
+
+  useEffect(() => {
+    let annule = false
+    const charger = async () => {
+      if (!supabase || !session?.user) { setDecksDuelsInk([]); return }
+      const { data, error } = await supabase
+        .from('duelsink_decks')
+        .select('deck_id, nom, encres, parties, derniere_partie, decklist')
+        .eq('user_id', session.user.id)
+        .order('parties', { ascending: false })
+      if (annule) return
+      if (error) { console.error('Chargement des decks Duels.ink impossible :', error); return }
+      setDecksDuelsInk(data || [])
+    }
+    charger()
+    return () => { annule = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user?.id])
+
+  useEffect(() => {
+    let annule = false
+    const charger = async () => {
+      if (!supabase || !session?.user) { setLignesWinrate([]); return }
+      let requete = supabase
+        .from('meta_winrates')
+        .select('deck_encres, deck_ref, adversaire_encres, sur_le_play, victoires, defaites, parties')
+        .eq('source', sourceStats)
+      // Les données globales ne sont rattachées à aucun joueur
+      requete = sourceStats === 'duelsink_perso'
+        ? requete.eq('user_id', session.user.id)
+        : requete.is('user_id', null)
+      const { data, error } = await requete
+      if (annule) return
+      if (error) { console.error('Chargement des winrates impossible :', error); return }
+      setLignesWinrate(data || [])
+    }
+    charger()
+    return () => { annule = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user?.id, sourceStats])
 
   // --- Profil & RGPD ---
   const [profilOuvert, setProfilOuvert] = useState(false)
@@ -361,6 +445,40 @@ export default function App() {
     return null
   }
 
+  // Convertit une liste Duels.ink ([{cardId, count}]) en liste texte anglaise,
+  // via la table de slugs générée au build depuis LorcanaJSON.
+  const importerDeckDuelsInk = async (deckDuelsInk) => {
+    if (!deckDuelsInk?.decklist?.length) return
+    setImportDuelsInkEnCours(true)
+    setErreur('')
+    try {
+      const reponse = await fetch('/cartes-slugs.json')
+      if (!reponse.ok) throw new Error('Table de correspondance des cartes introuvable')
+      const slugs = await reponse.json()
+
+      const lignes = []
+      const introuvables = []
+      for (const entree of deckDuelsInk.decklist) {
+        const nom = slugs[entree.cardId]
+        if (nom) lignes.push(`${entree.count} ${nom}`)
+        else introuvables.push(entree.cardId)
+      }
+      if (lignes.length === 0) throw new Error('Aucune carte reconnue dans cette liste')
+
+      setTexteImport(lignes.join('\n'))
+      setNomDeck(deckDuelsInk.nom || deckDuelsInk.encres || 'Deck Duels.ink')
+      setDeckDuelsInkALier(deckDuelsInk.deck_id)
+      setSelecteurDuelsInkOuvert(false)
+      if (introuvables.length > 0) {
+        setErreur(`${introuvables.length} carte(s) non reconnue(s) : ${introuvables.slice(0, 4).join(', ')}${introuvables.length > 4 ? '…' : ''}. Complète-les à la main après l'import.`)
+      }
+    } catch (err) {
+      console.error(err)
+      setErreur(String(err.message || err))
+    }
+    setImportDuelsInkEnCours(false)
+  }
+
   const gererImportDeck = async () => {
     if (!texteImport.trim() || !nomDeck.trim()) return
     setChargement(true)
@@ -410,11 +528,12 @@ export default function App() {
     if (deckTemporaire.length === 0) {
       setErreur(t('erreurImport'))
     } else {
-      const nouveauDeck = { id: Date.now().toString(), nom: nomDeck.trim(), cartes: deckTemporaire }
+      const nouveauDeck = { id: Date.now().toString(), nom: nomDeck.trim(), cartes: deckTemporaire, duelsinkDeckId: deckDuelsInkALier || null }
       setListeDecks([nouveauDeck, ...listeDecks])
       setIndexDeckActif(0)
       setTexteImport('')
       setNomDeck('')
+      setDeckDuelsInkALier(null)
       setPageActive('mes-decks')
     }
     setChargement(false)
@@ -462,6 +581,14 @@ export default function App() {
     setListeDecks(copieListeDecks)
   }
 
+  // Associe le deck affiché à un deck Duels.ink, pour des statistiques par liste
+  const lierDeckDuelsInk = (deckId) => {
+    if (!deckAffiche) return
+    const copie = [...listeDecks]
+    copie[indexDeckActif] = { ...deckAffiche, duelsinkDeckId: deckId }
+    setListeDecks(copie)
+  }
+
   const supprimerDeck = (idSupprime) => {
     if (window.confirm("Voulez-vous vraiment supprimer ce deck ?")) {
       const nouvelleListe = listeDecks.filter(d => d.id !== idSupprime)
@@ -489,6 +616,47 @@ export default function App() {
   const deckAffiche = listeDecks[indexDeckActif]
   const totalCartesDuDeck = deckAffiche ? deckAffiche.cartes.reduce((total, c) => total + c.quantite, 0) : 0
   const encresMonDeck = extraireEncresDuDeck(deckAffiche)
+
+  // Lignes correspondant au deck affiché, séparées play / draw
+  const encresDeckAffiche = [...encresMonDeck].sort().join('/')
+  // Par défaut on ne propose que les listes jouées dans les 7 derniers jours :
+  // ce sont celles sur lesquelles tu travailles réellement.
+  const decksDuelsInkComplets = decksDuelsInk.filter(d => d.decklist?.length)
+  // eslint-disable-next-line react-hooks/purity -- borne de fraîcheur, recalculée à chaque rendu sans effet de bord
+  const limiteRecence = Date.now() - 7 * 24 * 60 * 60 * 1000
+  const decksDuelsInkPertinents = decksDuelsInkComplets.filter(
+    d => d.derniere_partie && new Date(d.derniere_partie).getTime() >= limiteRecence
+  )
+  const decksDuelsInkAffiches = (voirTousDecksDuelsInk || decksDuelsInkPertinents.length === 0)
+    ? decksDuelsInkComplets
+    : decksDuelsInkPertinents
+
+  const refDeckLie = deckAffiche?.duelsinkDeckId || null
+  const SEUIL_REPLI = 20
+
+  // Pour une position donnée : on privilégie les chiffres du deck lié, et on
+  // retombe sur ceux de la bicolorité quand le matchup manque de parties.
+  const resoudreWinrates = (surLePlay) => {
+    const memeBicolo = lignesWinrate.filter(
+      l => l.deck_encres === encresDeckAffiche && l.sur_le_play === surLePlay
+    )
+    const global = memeBicolo.filter(l => l.deck_ref === '*')
+    if (!refDeckLie) return global
+
+    const precis = memeBicolo.filter(l => l.deck_ref === refDeckLie)
+    const parAdversaire = new Map(global.map(l => [l.adversaire_encres, { ...l, repli: true }]))
+    for (const ligne of precis) {
+      const existante = parAdversaire.get(ligne.adversaire_encres)
+      // On ne garde le chiffre du deck que s'il est suffisamment étayé
+      if (ligne.parties >= SEUIL_REPLI || !existante) {
+        parAdversaire.set(ligne.adversaire_encres, { ...ligne, repli: false })
+      }
+    }
+    return [...parAdversaire.values()]
+  }
+
+  const winratesPlay = resoudreWinrates(true)
+  const winratesDraw = resoudreWinrates(false)
   const cartesTrieesParCout = deckAffiche
     ? [...deckAffiche.cartes].sort((carteA, carteB) => {
         const coutA = Number.isFinite(Number(carteA.cost)) ? Number(carteA.cost) : 1
@@ -621,7 +789,7 @@ export default function App() {
         }
       }
     })
-    // eslint-disable-next-line react-hooks/purity -- appelé uniquement depuis des gestionnaires d'événements
+    // eslint-disable-next-line react-hooks/purity -- appelé depuis un gestionnaire d'événement
     setDerniereSauvegarde(Date.now())
   }
 
@@ -979,7 +1147,17 @@ export default function App() {
           <div className="w-full max-w-2xl space-y-6">
             <button onClick={() => setPageActive('accueil')} className="text-slate-400 hover:text-amber-400 text-sm mb-2">Retour</button>
             <div className="panneau p-6 rounded-2xl space-y-4">
-              <h2 className="text-xl font-bold">{t('nouveauDeckTitre')}</h2>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <h2 className="text-xl font-bold">{t('nouveauDeckTitre')}</h2>
+                {decksDuelsInkComplets.length > 0 && (
+                  <button
+                    onClick={() => setSelecteurDuelsInkOuvert(true)}
+                    className="btn-ghost px-4 py-2 rounded-xl text-xs font-bold"
+                  >
+                    {t('importDuelsInkTitre')}
+                  </button>
+                )}
+              </div>
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">{t('nomDeckLabel')}</label>
                 <input type="text" value={nomDeck} onChange={(e) => setNomDeck(e.target.value)} placeholder="Ex: Sapphire Emerald Tempo" className="w-full p-3 bg-slate-950 border border-slate-900 rounded-xl text-slate-200 focus:outline-none focus:border-amber-500 text-sm" />
@@ -1082,6 +1260,14 @@ export default function App() {
                   </p>
                 </div>
                 <div className="flex gap-3 w-full sm:w-auto">
+                  <button
+                    onClick={() => setStatsOuvertes(true)}
+                    disabled={winratesPlay.length === 0 && winratesDraw.length === 0}
+                    className="flex-1 sm:flex-none btn-ghost px-5 py-2.5 rounded-xl text-sm font-bold disabled:opacity-30 disabled:cursor-not-allowed"
+                    title={winratesPlay.length === 0 && winratesDraw.length === 0 ? t('statsVides') : t('statsTitre')}
+                  >
+                    {t('statsTitre')}
+                  </button>
                   <button onClick={() => { setSousVuePlaybook('menu'); setPageActive('playbook') }} className="flex-1 sm:flex-none btn-or px-6 py-2.5 rounded-xl text-sm">{t('plansJeu')}</button>
                   <button onClick={() => supprimerDeck(deckAffiche.id)} className="text-xs text-red-400 hover:text-red-500 border border-red-950 hover:border-red-500 px-3 py-2 rounded-xl transition-all">{t('supprimer')}</button>
                 </div>
@@ -1623,7 +1809,105 @@ export default function App() {
                 ))}
               </div>
 
-              <div style={{ marginTop: '36px', textAlign: 'center', fontSize: '12px', color: '#475569', fontWeight: 600 }}>Lormasters by Ekkox</div>
+              <div style={{ marginTop: '36px', textAlign: 'center', fontSize: '12px', color: '#475569', fontWeight: 600 }}>Loremasters by Ekkox</div>
+            </div>
+          </div>
+        )}
+
+        {/* MODALE SÉLECTION D'UN DECK DUELS.INK */}
+        {selecteurDuelsInkOuvert && (
+          <div className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 backdrop-blur-md animate-fadeIn">
+            <div className="panneau bg-slate-950/90 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden shadow-2xl">
+              <div className="p-5 border-b border-white/5 flex justify-between items-center gap-4">
+                <div className="min-w-0">
+                  <h3 className="font-display font-bold text-lg text-amber-300">{t('importDuelsInkTitre')}</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">{t('importDuelsInkAide')}</p>
+                </div>
+                <button onClick={() => setSelecteurDuelsInkOuvert(false)} className="btn-ghost text-sm font-bold px-4 py-2 rounded-xl shrink-0">{t('fermer')}</button>
+              </div>
+
+              <div className="p-5 overflow-y-auto custom-scrollbar space-y-2">
+                {decksDuelsInkAffiches.map((deck) => (
+                  <button
+                    key={deck.deck_id}
+                    onClick={() => importerDeckDuelsInk(deck)}
+                    disabled={importDuelsInkEnCours}
+                    className="w-full btn-ghost p-3 rounded-xl text-left flex flex-col gap-1 disabled:opacity-50"
+                  >
+                    <span className="flex items-center justify-between gap-3 w-full">
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span className="flex gap-1 shrink-0">
+                          {(deck.encres || '').split('/').filter(Boolean).map(id => (
+                            <PastilleEncre key={id} id={id} taille="w-3.5 h-3.5" langue={langue} />
+                          ))}
+                        </span>
+                        <span className="truncate text-sm font-semibold text-slate-100">
+                          {nomDeckDuelsInk(deck)}
+                        </span>
+                      </span>
+                      <span className="text-[11px] font-bold text-slate-400 shrink-0">
+                        {deck.parties} {langue === 'fr' ? 'parties' : 'games'}
+                      </span>
+                    </span>
+                    <span className="text-[11px] text-slate-500 truncate w-full">
+                      {apercuDeckDuelsInk(deck) || '—'}
+                      {deck.derniere_partie && ` · ${new Date(deck.derniere_partie).toLocaleDateString(langue === 'fr' ? 'fr-FR' : 'en-GB')}`}
+                    </span>
+                  </button>
+                ))}
+
+                {decksDuelsInkPertinents.length < decksDuelsInkComplets.length && (
+                  <button
+                    onClick={() => setVoirTousDecksDuelsInk(!voirTousDecksDuelsInk)}
+                    className="text-xs text-amber-400 hover:underline pt-1"
+                  >
+                    {voirTousDecksDuelsInk ? t('voirMoinsDecks') : `${t('voirTousDecks')} (${decksDuelsInkComplets.length})`}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODALE STATISTIQUES DE MATCHUP */}
+        {statsOuvertes && deckAffiche && (
+          <div className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 backdrop-blur-md animate-fadeIn">
+            <div className="panneau bg-slate-950/90 rounded-2xl w-full max-w-4xl max-h-[88vh] flex flex-col overflow-hidden shadow-2xl">
+              <div className="p-5 border-b border-white/5 flex justify-between items-center gap-4">
+                <div className="min-w-0">
+                  <h3 className="font-display font-bold text-lg text-amber-300 truncate">{t('statsTitre')} — {deckAffiche.nom}</h3>
+                  <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5">
+                    {encresMonDeck.map(id => <PastilleEncre key={id} id={id} taille="w-3 h-3" langue={langue} />)}
+                    {encresMonDeck.map(id => ENCRES.find(e => e.id === id)?.nom[langue] || id).join(' / ')}
+                  </p>
+                </div>
+                <button onClick={() => setStatsOuvertes(false)} className="btn-ghost text-sm font-bold px-4 py-2 rounded-xl shrink-0">{t('fermer')}</button>
+              </div>
+
+              <div className="p-6 overflow-y-auto custom-scrollbar space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <TableauWinrates titre={t('joueurCommence')} lignes={winratesPlay} langue={langue} />
+                  <TableauWinrates titre={t('joueurSecond')} lignes={winratesDraw} langue={langue} />
+                </div>
+                {decksDuelsInk.length > 0 && (
+                  <div className="panneau rounded-xl p-3 flex items-center gap-3 flex-wrap">
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-400">{t('lierDeckLabel')}</label>
+                    <select
+                      value={deckAffiche.duelsinkDeckId || ''}
+                      onChange={(e) => lierDeckDuelsInk(e.target.value || null)}
+                      className="flex-1 min-w-48 p-2 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-200 outline-none focus:border-amber-500"
+                    >
+                      <option value="">{t('lierDeckAucun')}</option>
+                      {decksDuelsInk.map(deck => (
+                        <option key={deck.deck_id} value={deck.deck_id}>
+                          {nomDeckDuelsInk(deck)} — {deck.parties} {langue === 'fr' ? 'parties' : 'games'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <p className="text-[11px] text-slate-500 italic text-center">{t('winratesSource')}</p>
+              </div>
             </div>
           </div>
         )}
