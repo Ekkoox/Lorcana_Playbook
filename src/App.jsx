@@ -18,6 +18,7 @@ import {
 } from './lorcana'
 import { PastilleEncre } from './composants/PastilleEncre'
 import { TableauWinrates } from './composants/TableauWinrates'
+import JeuUndercover from './composants/JeuUndercover'
 
 // Navigation mémorisée : au rechargement (F5) on revient là où on était.
 // Tout est calculé une seule fois ici, avant le premier rendu, pour éviter
@@ -101,6 +102,9 @@ export default function App() {
   const [modaleIndexOuvert, setModaleIndexOuvert] = useState(null)
   const [derniereSauvegarde, setDerniereSauvegarde] = useState(null)
   const [exportImageEnCours, setExportImageEnCours] = useState(false)
+  const [ficheHebdo, setFicheHebdo] = useState(null)
+  const [ficheEnCours, setFicheEnCours] = useState(false)
+  const refFicheHebdo = useRef(null)
   const refExportPlan = useRef(null)
 
   const carteNeutreMulligan = {
@@ -245,7 +249,7 @@ export default function App() {
         method: 'POST',
         headers: { Authorization: `Bearer ${session.access_token}` },
       })
-      const resultat = await reponse.json()
+      const resultat = await lireReponseJson(reponse)
       if (!reponse.ok) throw new Error(resultat.error || 'Synchronisation impossible')
       setMessageDuelsInk(`${resultat.partiesRecuperees} ${t('partiesImportees')}`)
       await rafraichirStatutDuelsInk()
@@ -294,6 +298,9 @@ export default function App() {
 
   // --- Profil & RGPD ---
   const [profilOuvert, setProfilOuvert] = useState(false)
+  // Jeu Undercover : volontairement accessible depuis le profil uniquement,
+  // pour ne pas encombrer la navigation principale du site.
+  const [undercoverOuvert, setUndercoverOuvert] = useState(false)
   const [pseudoEdition, setPseudoEdition] = useState('')
   const [messageProfil, setMessageProfil] = useState('')
 
@@ -1071,13 +1078,135 @@ export default function App() {
     setDerniereSauvegarde(null)
   }
 
+  // Les routes /api/… n'existent qu'une fois le site déployé (ou avec « vercel dev ») :
+  // sans cela le serveur de développement renvoie du HTML, d'où un message clair.
+  const lireReponseJson = async (reponse) => {
+    const typeContenu = reponse.headers.get('content-type') || ''
+    if (!typeContenu.includes('json')) {
+      throw new Error(t('apiIndisponible'))
+    }
+    return reponse.json()
+  }
+
+  // Rendu de texte pour les exports PNG.
+  //
+  // html2canvas dessine chaque mot à une position qu'il calcule lui-même, et
+  // Safari lui renvoie des mesures fausses : les mots se collent et certains
+  // caractères disparaissent (« 6282partiesanalysées »). Les espaces insécables
+  // n'y changent rien, puisque le problème est le positionnement, pas l'espace.
+  //
+  // La parade : chaque mot devient une boîte « inline-block ». html2canvas lit
+  // alors la position réelle de chaque boîte au lieu de la deviner, et l'espace
+  // est porté par la boîte elle-même.
+  const esp = (texte) => {
+    const mots = String(texte ?? '').split(' ')
+    return mots.map((mot, index) => (
+      <span key={index} style={{ display: 'inline-block', whiteSpace: 'pre' }}>
+        {index === mots.length - 1 ? mot : `${mot}${' '}`}
+      </span>
+    ))
+  }
+
+  // --- Fiche hebdomadaire d'une bicolorité ---
+  // Récupère les chiffres de la semaine côté serveur, puis déclenche le rendu.
+  const genererFicheHebdo = async () => {
+    // Les deux exports partagent le même moteur de capture : les lancer en même
+    // temps produirait deux images mélangées.
+    if (!encresDeckAffiche || ficheEnCours || exportImageEnCours) return
+    setFicheEnCours(true)
+    // Sans délai maximal, une requête qui n'aboutit jamais laisse le bouton
+    // tourner sans fin : on abandonne au bout de 30 s avec un message.
+    const minuteur = new AbortController()
+    const arret = setTimeout(() => minuteur.abort(), 30000)
+    try {
+      const reponse = await fetch(
+        `/api/fiche-hebdo?encres=${encodeURIComponent(encresDeckAffiche)}`,
+        { signal: minuteur.signal },
+      )
+      const donnees = await lireReponseJson(reponse)
+      if (!reponse.ok) throw new Error(donnees.error || 'Fiche indisponible')
+      if (!donnees.favorables?.length && !donnees.defavorables?.length) {
+        throw new Error(t('ficheHebdoVide'))
+      }
+      setFicheHebdo(donnees)
+    } catch (err) {
+      console.error('Fiche hebdomadaire :', err)
+      alert(err.name === 'AbortError' ? t('ficheHebdoTropLong') : String(err.message || err))
+      setFicheEnCours(false)
+    } finally {
+      clearTimeout(arret)
+    }
+  }
+
+  // Une fois les données là, le rendu hors écran est capturé en PNG
+  useEffect(() => {
+    if (!ficheHebdo) return
+    // Le rendu hors écran devrait toujours être monté ici ; s'il ne l'est pas,
+    // on relâche le bouton plutôt que de le laisser tourner indéfiniment.
+    if (!refFicheHebdo.current) {
+      console.error('Fiche hebdomadaire : rendu hors écran introuvable')
+      alert(t('exportErreur'))
+      setFicheHebdo(null)
+      setFicheEnCours(false)
+      return
+    }
+    let annule = false
+    const capturer = async () => {
+      try {
+        // Les visuels de cartes doivent être chargés avant la capture, sinon
+        // html2canvas dessine des trous. Deux passes : la seconde couvre les
+        // images de repli déclenchées par un onError.
+        const attendreImages = () => Promise.all(
+          Array.from(refFicheHebdo.current.querySelectorAll('img')).map(img => new Promise(resoudre => {
+            if (img.complete) return resoudre()
+            img.addEventListener('load', resoudre, { once: true })
+            img.addEventListener('error', resoudre, { once: true })
+            setTimeout(resoudre, 5000)
+          }))
+        )
+        await attendreImages()
+        await new Promise(resoudre => setTimeout(resoudre, 300))
+        await attendreImages()
+        if (annule) return
+        const canvas = await html2canvas(refFicheHebdo.current, {
+          useCORS: true,
+          backgroundColor: '#020617',
+          scale: 2,
+          logging: false,
+        })
+        if (annule) return
+        const nom = `fiche-${(deckAffiche?.nom || encresDeckAffiche)}-${ficheHebdo.semaine?.startDate || ''}`
+          .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-zA-Z0-9-]+/g, '-').replace(/-+/g, '-').toLowerCase()
+        const lien = document.createElement('a')
+        lien.download = `${nom}.png`
+        lien.href = canvas.toDataURL('image/png')
+        lien.click()
+      } catch (err) {
+        console.error('Rendu de la fiche impossible :', err)
+        alert(t('exportErreur'))
+      }
+      if (!annule) { setFicheHebdo(null); setFicheEnCours(false) }
+    }
+    capturer()
+    return () => { annule = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ficheHebdo])
+
   // --- Export du plan de jeu en image PNG partageable ---
   const telechargerImagePlan = () => {
-    if (!exportImageEnCours) setExportImageEnCours(true)
+    if (!exportImageEnCours && !ficheEnCours) setExportImageEnCours(true)
   }
 
   useEffect(() => {
-    if (!exportImageEnCours || !refExportPlan.current) return
+    if (!exportImageEnCours) return
+    // Même précaution que pour la fiche : sans rendu hors écran monté, on relâche
+    // le bouton au lieu de le laisser bloqué sur « export en cours ».
+    if (!refExportPlan.current) {
+      console.error('Export du plan : rendu hors écran introuvable')
+      setExportImageEnCours(false)
+      return
+    }
     let annule = false
 
     const generer = async () => {
@@ -1398,6 +1527,14 @@ export default function App() {
                     title={t('statsTitre')}
                   >
                     {t('statsTitre')}
+                  </button>
+                  <button
+                    onClick={genererFicheHebdo}
+                    disabled={ficheEnCours || !encresDeckAffiche}
+                    className="flex-1 sm:flex-none btn-ghost px-5 py-2.5 rounded-xl text-sm font-bold disabled:opacity-40 disabled:cursor-wait"
+                    title={t('ficheHebdoAide')}
+                  >
+                    {ficheEnCours ? t('ficheHebdoEnCours') : t('ficheHebdo')}
                   </button>
                   <button onClick={() => { setSousVuePlaybook('menu'); setPageActive('playbook') }} className="flex-1 sm:flex-none btn-or px-6 py-2.5 rounded-xl text-sm">{t('plansJeu')}</button>
                   <button onClick={() => supprimerDeck(deckAffiche.id)} className="text-xs text-red-400 hover:text-red-500 border border-red-950 hover:border-red-500 px-3 py-2 rounded-xl transition-all">{t('supprimer')}</button>
@@ -1839,6 +1976,142 @@ export default function App() {
           </div>
         )}
 
+        {/* RENDU HORS ÉCRAN DE LA FICHE HEBDOMADAIRE
+            Contraintes html2canvas : couleurs en hexadécimal (pas d'oklch), police
+            Arial, hauteurs et line-height explicites plutôt qu'un centrage flex,
+            et espaces insécables via esp(). */}
+        {ficheHebdo && (
+          <div style={{ position: 'fixed', left: '-99999px', top: 0, pointerEvents: 'none' }} aria-hidden="true">
+            <div ref={refFicheHebdo} style={{ width: '1280px', padding: '44px', backgroundColor: '#020617', color: '#f1f5f9', fontFamily: 'Arial, Helvetica, sans-serif' }}>
+
+              {/* En-tête */}
+              <div style={{ marginBottom: '28px', whiteSpace: 'nowrap', fontSize: 0 }}>
+                <div style={{ display: 'inline-block', verticalAlign: 'top', width: '760px' }}>
+                  <span style={{ display: 'block', fontSize: '12px', lineHeight: '16px', letterSpacing: '4px', textTransform: 'uppercase', color: '#f59e0b', fontWeight: 800 }}>
+                    {esp(`Loremasters — ${t('ficheHebdo')}`)}
+                  </span>
+                  <span style={{ display: 'block', fontSize: '32px', lineHeight: '38px', fontWeight: 900, marginTop: '8px' }}>
+                    {esp(deckAffiche?.nom || encresDeckAffiche)}
+                  </span>
+                  <div style={{ marginTop: '10px', height: '20px', lineHeight: '20px', fontSize: 0 }}>
+                    {encresMonDeck.map(id => (
+                      <span key={id} style={{ width: '16px', height: '16px', borderRadius: '9999px', backgroundColor: couleurEncre(id), border: '1px solid rgba(255,255,255,0.45)', display: 'inline-block', verticalAlign: 'middle', marginRight: '6px' }} />
+                    ))}
+                    <span style={{ display: 'inline-block', verticalAlign: 'middle', fontSize: '14px', lineHeight: '20px', color: '#cbd5e1', marginLeft: '4px' }}>
+                      {esp(encresMonDeck.map(id => ENCRES.find(e => e.id === id)?.nom[langue] || id).join(' / '))}
+                    </span>
+                  </div>
+                </div>
+                <div style={{ display: 'inline-block', verticalAlign: 'top', width: '432px', textAlign: 'right', color: '#94a3b8' }}>
+                  <span style={{ display: 'block', fontSize: '14px', lineHeight: '20px', fontWeight: 700, color: '#e2e8f0' }}>
+                    {esp(ficheHebdo.semaine?.label || ficheHebdo.semaine?.startDate)}
+                  </span>
+                  <span style={{ display: 'block', fontSize: '12px', lineHeight: '19px' }}>
+                    {esp(`${ficheHebdo.partiesTotales} ${langue === 'fr' ? 'parties analysées' : 'games analysed'}`)}
+                  </span>
+                  <span style={{ display: 'block', fontSize: '12px', lineHeight: '19px' }}>
+                    {esp(langue === 'fr' ? 'écart vs semaine précédente' : 'change vs previous week')}
+                  </span>
+                </div>
+              </div>
+
+              <div style={{ whiteSpace: 'nowrap', fontSize: 0 }}>
+
+                {/* Decklist en visuels de cartes, triée par coût */}
+                <div style={{ display: 'inline-block', verticalAlign: 'top', width: '540px' }}>
+                  <div style={{ display: 'inline-block', height: '26px', lineHeight: '26px', padding: '0 14px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '3px', backgroundColor: '#f59e0b', color: '#020617', borderRadius: '8px', marginBottom: '14px' }}>
+                    {langue === 'fr' ? 'Deck' : 'Decklist'}
+                  </div>
+                  {/* whiteSpace normal : le conteneur parent est en nowrap pour
+                      garder les deux colonnes côte à côte, mais la grille de
+                      cartes doit, elle, revenir à la ligne. */}
+                  <div style={{ fontSize: 0, whiteSpace: 'normal' }}>
+                    {cartesTrieesParCout.map(carte => {
+                      const infos = extraireInfosCarteLocale(carte)
+                      // Pas de pastille en position absolue : html2canvas y décale
+                      // le chiffre. On reprend le schéma de l'export du plan —
+                      // l'image, puis un bandeau sous elle, en flux normal.
+                      //
+                      // position:relative sur la cellule est indispensable : sans
+                      // elle, html2canvas applique mal le rognage d'un
+                      // « overflow:hidden » à coins arrondis et efface le contenu.
+                      return (
+                        <div key={carte.id} style={{ position: 'relative', display: 'inline-block', verticalAlign: 'top', boxSizing: 'border-box', width: '82px', marginRight: '8px', marginBottom: '8px', borderRadius: '7px', overflow: 'hidden', backgroundColor: '#0f172a', border: '1px solid #1e293b' }}>
+                          {infos.image ? (
+                            <img
+                              src={urlImagePourExport(infos.image)}
+                              alt={infos.name}
+                              data-secours={urlImagePourExport(infos.imageSecours) || ''}
+                              onError={(e) => { const secours = e.currentTarget.dataset.secours; if (secours && e.currentTarget.src !== secours) e.currentTarget.src = secours }}
+                              style={{ width: '80px', height: '112px', display: 'block', objectFit: 'cover' }}
+                            />
+                          ) : (
+                            <span style={{ display: 'block', width: '80px', height: '112px', lineHeight: '112px', textAlign: 'center', fontSize: '10px', color: '#475569', fontWeight: 700, overflow: 'hidden' }}>
+                              {esp(infos.name || '—')}
+                            </span>
+                          )}
+                          <span style={{ display: 'block', width: '80px', height: '22px', paddingTop: '3px', boxSizing: 'border-box', textAlign: 'center', backgroundColor: '#020617', borderTop: '1px solid #1e293b' }}>
+                            <span style={{ display: 'block', fontSize: '12px', lineHeight: '14px', fontWeight: 900, color: '#f59e0b' }}>{`×${carte.quantite}`}</span>
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Matchups */}
+                <div style={{ display: 'inline-block', verticalAlign: 'top', width: '624px', marginLeft: '28px' }}>
+                  {[
+                    { titre: langue === 'fr' ? 'Meilleurs matchups' : 'Best matchups', lignes: ficheHebdo.favorables, fond: '#10b981' },
+                    { titre: langue === 'fr' ? 'Matchups difficiles' : 'Toughest matchups', lignes: ficheHebdo.defavorables, fond: '#ef4444' },
+                  ].map((bloc, indexBloc) => (
+                    <div key={bloc.titre} style={{ marginTop: indexBloc === 0 ? 0 : '26px' }}>
+                      <div style={{ display: 'inline-block', height: '26px', lineHeight: '26px', padding: '0 14px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '3px', backgroundColor: bloc.fond, color: '#ffffff', borderRadius: '8px', marginBottom: '14px' }}>
+                        {esp(bloc.titre)}
+                      </div>
+                      {(bloc.lignes || []).map(ligne => {
+                        const encresAdv = String(ligne.adversaire || '').split('/')
+                        const hausse = ligne.ecart != null && ligne.ecart > 0
+                        const baisse = ligne.ecart != null && ligne.ecart < 0
+                        return (
+                          <div key={ligne.adversaire} style={{ height: '56px', backgroundColor: '#0b1120', border: '1px solid #1e293b', borderRadius: '12px', padding: '0 16px', marginBottom: '8px', fontSize: 0, whiteSpace: 'nowrap' }}>
+                            <span style={{ display: 'inline-block', verticalAlign: 'middle', width: '48px', height: '56px', lineHeight: '56px', fontSize: 0 }}>
+                              {encresAdv.map(id => (
+                                <span key={id} style={{ width: '16px', height: '16px', borderRadius: '9999px', backgroundColor: couleurEncre(id), border: '1px solid rgba(255,255,255,0.45)', display: 'inline-block', verticalAlign: 'middle', marginRight: '5px' }} />
+                              ))}
+                            </span>
+                            <span style={{ display: 'inline-block', verticalAlign: 'middle', width: '226px', height: '56px', lineHeight: '56px', fontSize: '14px', fontWeight: 700, overflow: 'hidden' }}>
+                              {esp(encresAdv.map(id => ENCRES.find(e => e.id === id)?.nom[langue] || id).join(' / '))}
+                            </span>
+                            <span style={{ display: 'inline-block', verticalAlign: 'middle', width: '100px', height: '56px', lineHeight: '56px', fontSize: '11px', color: '#64748b', textAlign: 'right' }}>
+                              {esp(`${ligne.parties} ${langue === 'fr' ? 'parties' : 'games'}`)}
+                            </span>
+                            <span style={{ display: 'inline-block', verticalAlign: 'middle', width: '102px', height: '56px', lineHeight: '56px', fontSize: '13px', fontWeight: 800, textAlign: 'right', color: hausse ? '#34d399' : baisse ? '#f87171' : '#64748b' }}>
+                              {ligne.ecart == null ? '—' : esp(`${hausse ? '▲' : baisse ? '▼' : '='} ${Math.abs(ligne.ecart).toFixed(1)} pt`)}
+                            </span>
+                            <span style={{ display: 'inline-block', verticalAlign: 'middle', width: '84px', height: '56px', lineHeight: '56px', fontSize: '22px', fontWeight: 900, textAlign: 'right', color: ligne.taux >= 52 ? '#34d399' : ligne.taux <= 48 ? '#f87171' : '#e2e8f0' }}>
+                              {`${Math.round(ligne.taux)}%`}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ marginTop: '30px', paddingTop: '16px', borderTop: '1px solid #1e293b', fontSize: 0, whiteSpace: 'nowrap' }}>
+                <span style={{ display: 'inline-block', width: '596px', fontSize: '11px', lineHeight: '16px', color: '#475569' }}>
+                  {esp('Loremasters by Ekkox · loremasters.fr')}
+                </span>
+                <span style={{ display: 'inline-block', width: '596px', fontSize: '11px', lineHeight: '16px', color: '#475569', textAlign: 'right' }}>
+                  {esp(`${langue === 'fr' ? 'Statistiques communautaires' : 'Community statistics'} · duels.ink/stats`)}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* RENDU HORS ÉCRAN POUR L'EXPORT IMAGE DU PLAN (styles inline uniquement : html2canvas ne supporte pas les couleurs oklch de Tailwind v4) */}
         {exportImageEnCours && deckAffiche && (
           <div style={{ position: 'fixed', left: '-99999px', top: 0, pointerEvents: 'none' }} aria-hidden="true">
@@ -2087,6 +2360,16 @@ export default function App() {
           </div>
         )}
 
+        {/* JEU UNDERCOVER */}
+        {undercoverOuvert && (
+          <JeuUndercover
+            langue={langue}
+            t={t}
+            cartesFr={cartesFr}
+            onFermer={() => setUndercoverOuvert(false)}
+          />
+        )}
+
         {/* MODALE PROFIL & DONNÉES PERSONNELLES (RGPD) */}
         {profilOuvert && session?.user && (
           <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn">
@@ -2121,6 +2404,20 @@ export default function App() {
                   </div>
                   <p className="text-[11px] text-slate-500">{t('pseudoAide')}</p>
                   {messageProfil && <p className="text-xs text-emerald-400 font-bold">{messageProfil}</p>}
+                </div>
+
+                <hr className="filet-dore" />
+
+                {/* Undercover : petit jeu de soirée, réservé à cette page */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">{t('undercoverTitre')}</h4>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">{t('undercoverSousTitre')}</p>
+                  <button
+                    onClick={() => { setProfilOuvert(false); setUndercoverOuvert(true) }}
+                    className="btn-ghost px-4 py-2 rounded-xl text-xs font-bold"
+                  >
+                    {t('undercoverOuvrir')}
+                  </button>
                 </div>
 
                 <hr className="filet-dore" />

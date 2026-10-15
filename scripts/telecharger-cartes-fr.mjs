@@ -1,7 +1,7 @@
 // Télécharge les données françaises des cartes (LorcanaJSON) dans public/,
 // pour les servir depuis le site et éviter le blocage CORS.
 // Lancé automatiquement avant `npm run dev` et `npm run build`.
-import { mkdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -20,13 +20,29 @@ const fichierEstRecent = async () => {
   }
 }
 
+// Champs attendus dans le fichier mis en cache. Si l'un manque, c'est que le
+// fichier date d'une version antérieure du script : on le retélécharge sans
+// attendre l'expiration, pour éviter d'avoir à penser à `--force`.
+const CHAMPS_REQUIS = ['fullName', 'name', 'version', 'story', 'color', 'cost', 'type']
+
+const fichierAuBonFormat = async () => {
+  try {
+    const donnees = JSON.parse(await readFile(FICHIER_CIBLE, 'utf8'))
+    const premiere = donnees?.cards?.[0]
+    if (!premiere) return false
+    return CHAMPS_REQUIS.every(champ => champ in premiere)
+  } catch {
+    return false
+  }
+}
+
 const fichierExiste = async () => {
   try { await stat(FICHIER_CIBLE); return true } catch { return false }
 }
 
 const forcer = process.argv.includes('--force')
 
-if (!forcer && await fichierEstRecent()) {
+if (!forcer && await fichierEstRecent() && await fichierAuBonFormat()) {
   console.log('[cartes-fr] Données françaises déjà à jour (moins de 7 jours). Utilise --force pour retélécharger.')
   process.exit(0)
 }
@@ -52,6 +68,14 @@ try {
         number: c.number,
         fullName: c.fullName,
         simpleName: c.simpleName,
+        // Champs de parenté, utilisés par le jeu Undercover pour apparier deux
+        // cartes proches : même personnage, même film, ou même couleur et coût.
+        name: c.name,
+        version: c.version,
+        story: c.story,
+        color: c.color,
+        cost: c.cost,
+        type: c.type,
         images: { thumbnail: c.images?.thumbnail, full: c.images?.full }
       }))
   }

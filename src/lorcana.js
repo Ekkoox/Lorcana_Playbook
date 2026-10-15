@@ -78,6 +78,14 @@ export const chargerCartesFr = () => {
             simpleName: carteFr.simpleName,
             setCode: carteFr.setCode,
             number: carteFr.number,
+            // Champs de parenté (personnage, film, couleur, coût, type), utilisés
+            // par le jeu Undercover pour apparier deux cartes proches
+            name: carteFr.name,
+            version: carteFr.version,
+            story: carteFr.story,
+            color: carteFr.color,
+            cost: carteFr.cost,
+            type: carteFr.type,
             images: { thumbnail: carteFr.images?.thumbnail, full: carteFr.images?.full }
           })
         }
