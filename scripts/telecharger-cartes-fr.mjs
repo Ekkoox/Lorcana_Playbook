@@ -8,7 +8,11 @@ import { fileURLToPath } from 'node:url'
 const URL_SOURCE = 'https://lorcanajson.org/files/current/fr/allCards.json'
 const DOSSIER_PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
 const FICHIER_CIBLE = path.join(DOSSIER_PUBLIC, 'cartes-fr.json')
-const AGE_MAX_JOURS = 7
+// Une journée seulement : à la sortie d'un chapitre, LorcanaJSON publie les
+// cartes au fil des jours (le chapitre 14 est passé de 111 à 256 cartes en
+// vingt-quatre heures). Une fenêtre d'une semaine laissait le site afficher
+// des cartes en anglais pendant des jours après leur parution en français.
+const AGE_MAX_JOURS = 1
 
 const fichierEstRecent = async () => {
   try {
@@ -43,7 +47,7 @@ const fichierExiste = async () => {
 const forcer = process.argv.includes('--force')
 
 if (!forcer && await fichierEstRecent() && await fichierAuBonFormat()) {
-  console.log('[cartes-fr] Données françaises déjà à jour (moins de 7 jours). Utilise --force pour retélécharger.')
+  console.log('[cartes-fr] Données françaises déjà à jour (moins de 24 h). Utilise --force pour retélécharger.')
   process.exit(0)
 }
 
